@@ -1,0 +1,147 @@
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions for common validations
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    
+    function isValidUserData(data) {
+      return data.size() <= 20
+        && (data.displayName == null || data.displayName is string)
+        && (data.bio == null || data.bio is string && data.bio.size() <= 500)
+        && (data.handicapIndex == null || data.handicapIndex is number)
+        && (data.homeCourse == null || data.homeCourse is string);
+    }
+    
+    // User profiles - secure user data
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && isValidUserData(request.resource.data);
+      allow update: if isOwner(userId) && isValidUserData(request.resource.data);
+      allow delete: if isAdmin();
+      
+      // User's rounds/scorecards
+      match /rounds/{roundId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId);
+        allow delete: if isOwner(userId);
+      }
+      
+      // User's saved courses
+      match /favoriteCourses/{courseId} {
+        allow read, write: if isOwner(userId);
+      }
+      
+      // User's connections (followers/following)
+      match /connections/{connectionId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId);
+      }
+    }
+    
+    // Public posts/feed
+    match /posts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      
+      // Comments on posts
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+        allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      }
+      
+      // Likes on posts
+      match /likes/{userId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId);
+      }
+    }
+    
+    // Golf courses (public data)
+    match /courses/{courseId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+      
+      // Course reviews
+      match /reviews/{reviewId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+        allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      }
+    }
+    
+    // Groups (looking for players)
+    match /groups/{groupId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid || 
+        resource.data.admins[request.auth.uid] == true
+      );
+      allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
+      
+      // Group members
+      match /members/{memberId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && (
+          resource.data.createdBy == request.auth.uid || 
+          resource.data.admins[request.auth.uid] == true ||
+          memberId == request.auth.uid
+        );
+        allow delete: if isSignedIn() && (
+          resource.data.createdBy == request.auth.uid || 
+          resource.data.admins[request.auth.uid] == true ||
+          memberId == request.auth.uid
+        );
+      }
+    }
+    
+    // Marketplace listings
+    match /marketplace/{listingId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.sellerId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.sellerId == request.auth.uid;
+    }
+    
+    // Messages
+    match /messages/{chatId} {
+      allow create: if isSignedIn() && 
+        (request.resource.data.participants[request.auth.uid] == true);
+      allow read: if isSignedIn() && resource.data.participants[request.auth.uid] == true;
+      
+      // Individual messages
+      match /thread/{messageId} {
+        allow read: if isSignedIn() && get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true;
+        allow create: if isSignedIn() && 
+          get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true &&
+          request.resource.data.senderId == request.auth.uid;
+        allow update: if false; // Messages cannot be edited
+        allow delete: if isSignedIn() && request.auth.uid == resource.data.senderId;
+      }
+    }
+    
+    // System collections (admin only)
+    match /system/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Admin users
+    match /admins/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,71 @@
+// storage.rules
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/(default)/documents/admins/$(request.auth.uid));
+    }
+    
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    
+    function isValidFileSize() {
+      return request.resource.size <= 5 * 1024 * 1024; // 5MB max
+    }
+    
+    // Default: deny all
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+    
+    // User profile images
+    match /users/{userId}/profile/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) && isImage() && isValidFileSize();
+    }
+    
+    // Golf course images - public read, admin write
+    match /courses/{courseId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isImage() && isValidFileSize();
+    }
+    
+    // Post images 
+    match /posts/{postId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && 
+        exists(/databases/(default)/documents/posts/$(postId)) && 
+        get(/databases/(default)/documents/posts/$(postId)).data.authorId == request.auth.uid &&
+        isImage() && 
+        isValidFileSize();
+      allow delete: if isSignedIn() && 
+        exists(/databases/(default)/documents/posts/$(postId)) && 
+        get(/databases/(default)/documents/posts/$(postId)).data.authorId == request.auth.uid;
+    }
+    
+    // Marketplace listing images
+    match /marketplace/{listingId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && 
+        (
+          !exists(/databases/(default)/documents/marketplace/$(listingId)) || 
+          get(/databases/(default)/documents/marketplace/$(listingId)).data.sellerId == request.auth.uid
+        ) &&
+        isImage() && 
+        isValidFileSize();
+      allow delete: if isSignedIn() && 
+        exists(/databases/(default)/documents/marketplace/$(listingId)) && 
+        get(/databases/(default)/documents/marketplace/$(listingId)).data.sellerId == request.auth.uid;
+    }
+  }
+}

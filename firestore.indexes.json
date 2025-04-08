@@ -1,0 +1,69 @@
+{
+    "indexes": [
+      {
+        "collectionGroup": "posts",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "authorId", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "DESCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "posts",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "visibility", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "DESCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "rounds",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "userId", "order": "ASCENDING" },
+          { "fieldPath": "date", "order": "DESCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "marketplace",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "category", "order": "ASCENDING" },
+          { "fieldPath": "price", "order": "ASCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "marketplace",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "sellerId", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "DESCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "groups",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "isPublic", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "DESCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "comments",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "postId", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "ASCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "thread",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "chatId", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "ASCENDING" }
+        ]
+      }
+    ],
+    "fieldOverrides": []
+  }
