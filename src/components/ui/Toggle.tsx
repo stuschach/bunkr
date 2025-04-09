@@ -28,7 +28,7 @@ const Toggle = React.forwardRef<HTMLButtonElement, ToggleProps>(
           "relative inline-flex shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors",
           "after:absolute after:top-[1px] after:left-[1px] after:translate-x-0",
           "after:rounded-full after:bg-white after:shadow-lg after:transition-transform",
-          pressed ? "bg-green-fairway after:translate-x-full" : "bg-gray-300",
+          pressed ? "bg-green-500 after:translate-x-full" : "bg-gray-300 dark:bg-gray-700",
           disabled && "opacity-50 cursor-not-allowed",
           sizeClasses[size],
           className

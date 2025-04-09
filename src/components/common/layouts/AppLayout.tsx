@@ -33,7 +33,7 @@ export function AppLayout({ children, requireAuth = true }: AppLayoutProps) {
   if (requireAuth && !mounted) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-green-fairway"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-green-500"></div>
       </div>
     );
   }
@@ -42,7 +42,7 @@ export function AppLayout({ children, requireAuth = true }: AppLayoutProps) {
   if (requireAuth && (loading || !user)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-green-fairway"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-green-500"></div>
       </div>
     );
   }

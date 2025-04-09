@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils/cn';
 
 export type ToastVariant = 'success' | 'error' | 'warning' | 'info';
+export type ToastPosition = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
 
 export interface ToastProps {
   open: boolean;
@@ -13,7 +14,7 @@ export interface ToastProps {
   title: string;
   description?: string;
   duration?: number;
-  position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
+  position?: ToastPosition;
 }
 
 export function Toast({
@@ -42,14 +43,15 @@ export function Toast({
     }
   }, [open, duration, onClose]);
 
-  const variantStyles = {
+  const variantStyles: Record<ToastVariant, string> = {
     success: 'bg-green-50 dark:bg-green-900/20 border-green-500 text-green-700 dark:text-green-400',
     error: 'bg-red-50 dark:bg-red-900/20 border-red-500 text-red-700 dark:text-red-400',
     warning: 'bg-amber-50 dark:bg-amber-900/20 border-amber-500 text-amber-700 dark:text-amber-400',
     info: 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 text-blue-700 dark:text-blue-400',
   };
 
-  const positionStyles = {
+  // Fix: Use the ToastPosition type instead of ToastProps['position']
+  const positionStyles: Record<ToastPosition, string> = {
     'top-right': 'top-4 right-4',
     'top-left': 'top-4 left-4',
     'bottom-right': 'bottom-4 right-4',

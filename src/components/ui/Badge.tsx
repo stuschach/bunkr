@@ -7,13 +7,13 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-green-fairway text-white",
-        secondary: "bg-sand-bunker text-gray-900",
-        outline: "border border-green-fairway text-green-fairway",
+        default: "bg-green-500 text-white", // Was "bg-green-fairway"
+        secondary: "bg-sand-300 text-gray-900", // Was "bg-sand-bunker"
+        outline: "border border-green-500 text-green-500", // Was "border-green-fairway text-green-fairway"
         success: "bg-green-500 text-white",
         warning: "bg-amber-500 text-white",
         error: "bg-red-500 text-white",
-        info: "bg-sky-light text-gray-900",
+        info: "bg-sky-300 text-gray-900", // Was "bg-sky-light"
       },
     },
     defaultVariants: {

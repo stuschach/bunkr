@@ -16,18 +16,29 @@ service cloud.firestore {
     }
     
     function isValidUserData(data) {
-      return data.size() <= 20
-        && (data.displayName == null || data.displayName is string)
-        && (data.bio == null || data.bio is string && data.bio.size() <= 500)
-        && (data.handicapIndex == null || data.handicapIndex is number)
-        && (data.homeCourse == null || data.homeCourse is string);
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt']) &&
+        (data.displayName is string) &&
+        (data.email is string) &&
+        (data.uid is string) &&
+        (data.handicapIndex == null || data.handicapIndex is number) &&
+        (data.homeCourse == null || data.homeCourse is string) &&
+        (data.profileComplete is bool);
     }
     
     // User profiles - secure user data
     match /users/{userId} {
+      // Allow read if signed in
       allow read: if isSignedIn();
-      allow create: if isOwner(userId) && isValidUserData(request.resource.data);
-      allow update: if isOwner(userId) && isValidUserData(request.resource.data);
+      
+      // Allow creation if the UID matches the authenticated user
+      allow create: if isSignedIn() && 
+                    request.auth.uid == userId && 
+                    request.resource.data.uid == userId;
+      
+      // Allow updates if they own the document
+      allow update: if isOwner(userId);
+      
+      // Only allow admins to delete user documents
       allow delete: if isAdmin();
       
       // User's rounds/scorecards
@@ -53,16 +64,41 @@ service cloud.firestore {
     match /posts/{postId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
-      allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      // Allow updating like and comment counts by any signed-in user
+      allow update: if isSignedIn() && (
+        // Full update by owner
+        (resource.data.authorId == request.auth.uid) || 
+        // Or just updating likes/comments/likedBy fields by any signed-in user
+        (request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['likes', 'comments', 'likedBy']))
+      );
+      allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
       
       // Comments on posts
       match /comments/{commentId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
-        allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+        allow update: if isSignedIn() && resource.data.authorId == request.auth.uid;
+        allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      }
+    }
+    
+    // Scorecards - can be shared as posts
+    match /scorecards/{scorecardId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Comments on scorecards
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+        allow update: if isSignedIn() && resource.data.authorId == request.auth.uid;
+        allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
       }
       
-      // Likes on posts
+      // Likes on scorecards
       match /likes/{userId} {
         allow read: if isSignedIn();
         allow write: if isOwner(userId);

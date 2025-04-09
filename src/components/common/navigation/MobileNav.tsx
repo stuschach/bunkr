@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils/cn';
 
 interface NavItem {
@@ -109,6 +109,7 @@ const mobileNavItems: NavItem[] = [
 
 export function MobileNav() {
   const pathname = usePathname();
+  const router = useRouter();
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-around items-center h-16 bg-white dark:bg-gray-950 border-t border-gray-200 dark:border-gray-800">
@@ -119,8 +120,8 @@ export function MobileNav() {
           className={cn(
             'flex flex-col items-center justify-center w-full h-full text-xs',
             pathname === item.href || pathname?.startsWith(`${item.href}/`)
-              ? 'text-green-fairway'
-              : 'text-gray-500 hover:text-green-fairway'
+              ? 'text-green-500'
+              : 'text-gray-500 hover:text-green-500'
           )}
         >
           <div className="mb-1">{item.icon}</div>

@@ -150,7 +150,7 @@ export function VideoPlayer({
               onChange={handleProgressChange}
               className="w-full h-1 bg-gray-400 rounded-full appearance-none cursor-pointer"
               style={{
-                background: `linear-gradient(to right, #4D8A54 0%, #4D8A54 ${progress}%, rgba(255,255,255,0.3) ${progress}%, rgba(255,255,255,0.3) 100%)`,
+                background: `linear-gradient(to right, #4d8a54 0%, #4d8a54 ${progress}%, rgba(255,255,255,0.3) ${progress}%, rgba(255,255,255,0.3) 100%)`,
               }}
             />
           </div>

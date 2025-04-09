@@ -38,7 +38,7 @@ export const Tabs: React.FC<TabsProps> = ({
         cn(
           "px-4 py-2 text-sm font-medium",
           isActive
-            ? "border-b-2 border-green-fairway text-green-fairway"
+            ? "border-b-2 border-green-500 text-green-500"
             : "text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
         ),
     },
@@ -48,7 +48,7 @@ export const Tabs: React.FC<TabsProps> = ({
         cn(
           "px-4 py-2 text-sm font-medium rounded-full",
           isActive
-            ? "bg-green-fairway text-white"
+            ? "bg-green-500 text-white"
             : "text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
         ),
     },
@@ -58,7 +58,7 @@ export const Tabs: React.FC<TabsProps> = ({
         cn(
           "pb-2 text-sm font-medium border-b-2 -mb-px",
           isActive
-            ? "border-green-fairway text-green-fairway"
+            ? "border-green-500 text-green-500"
             : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
         ),
     },

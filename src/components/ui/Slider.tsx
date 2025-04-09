@@ -1,4 +1,3 @@
-// src/components/ui/Slider.tsx
 import React, { forwardRef } from 'react';
 import { cn } from '@/lib/utils/cn';
 
@@ -80,13 +79,13 @@ const Slider = forwardRef<HTMLDivElement, SliderProps>(
             disabled={disabled}
             className={cn(
               "w-full h-2 appearance-none rounded-md bg-gray-200 dark:bg-gray-700 cursor-pointer",
-              "focus:outline-none focus:ring-2 focus:ring-green-fairway focus:ring-offset-2 dark:focus:ring-offset-gray-950",
+              "focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 dark:focus:ring-offset-gray-950",
               disabled && "opacity-50 cursor-not-allowed",
               "range-input" // Custom class for styling input range
             )}
           />
           <div 
-            className="absolute pointer-events-none left-0 top-1/2 h-2 -translate-y-1/2 rounded-l-md bg-green-fairway" 
+            className="absolute pointer-events-none left-0 top-1/2 h-2 -translate-y-1/2 rounded-l-md bg-green-500" 
             style={{ width: `${percentage}%` }}
           />
         </div>

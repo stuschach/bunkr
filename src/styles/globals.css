@@ -1,302 +1,47 @@
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
-@import './variables.css';
-@import './animations.css';
 
 @layer base {
   /* Base styles */
   html {
     scroll-behavior: smooth;
     height: 100%;
-    font-size: 16px;
   }
   
   body {
-    @apply font-body bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-50;
     min-height: 100%;
-    overflow-x: hidden;
     transition: background-color 0.3s ease-in-out;
   }
 
-  h1, h2, h3, h4, h5, h6 {
-    @apply font-heading font-bold tracking-tight;
-  }
-
-  h1 {
-    @apply text-4xl md:text-5xl;
-  }
-
-  h2 {
-    @apply text-3xl md:text-4xl;
-  }
-
-  h3 {
-    @apply text-2xl md:text-3xl;
-  }
-
-  h4 {
-    @apply text-xl md:text-2xl;
-  }
-
-  h5 {
-    @apply text-lg md:text-xl;
-  }
-
-  h6 {
-    @apply text-base md:text-lg;
-  }
-
   a {
-    @apply text-green-fairway hover:text-green-dark transition-colors;
-  }
-
-  p {
-    @apply leading-relaxed;
+    @apply text-green-500 hover:text-green-700 transition-colors;
   }
 
   /* Focus styles for accessibility */
   *:focus-visible {
-    @apply outline-none ring-2 ring-green-fairway ring-offset-2 ring-offset-white dark:ring-offset-gray-950;
+    @apply outline-none ring-2 ring-green-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-950;
   }
-  
-  /* Custom range input styling */
+}
+
+/* Minimal custom components that can't be easily done with Tailwind utilities */
+@layer components {
+  /* Range input styling */
   .range-input::-webkit-slider-thumb {
     -webkit-appearance: none;
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #4d8a54; /* Green fairway color */
-    cursor: pointer;
+    @apply w-4 h-4 rounded-full bg-green-500 cursor-pointer;
   }
 
   .range-input::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #4d8a54; /* Green fairway color */
-    cursor: pointer;
-    border: none;
+    @apply w-4 h-4 rounded-full bg-green-500 cursor-pointer border-0;
   }
 
   /* Dark mode thumb */
-  :is(.dark) .range-input::-webkit-slider-thumb {
-    background: #8fbc8f; /* Light green for better visibility */
+  .dark .range-input::-webkit-slider-thumb {
+    @apply bg-green-400;
   }
 
-  :is(.dark) .range-input::-moz-range-thumb {
-    background: #8fbc8f; /* Light green for better visibility */
-  }
-}
-
-@layer components {
-  /* Container */
-  .container {
-    @apply mx-auto px-4 max-w-[var(--content-max-width)];
-  }
-
-  /* Page layouts */
-  .page-container {
-    @apply min-h-screen flex flex-col;
-  }
-
-  .page-content {
-    @apply flex-grow py-8;
-  }
-
-  /* Card styles */
-  .card {
-    @apply bg-white dark:bg-gray-900 rounded-lg shadow border border-gray-200 dark:border-gray-800 overflow-hidden;
-  }
-
-  .card-header {
-    @apply p-4 border-b border-gray-200 dark:border-gray-800;
-  }
-
-  .card-content {
-    @apply p-4;
-  }
-
-  .card-footer {
-    @apply p-4 border-t border-gray-200 dark:border-gray-800;
-  }
-
-  /* Form elements */
-  .form-group {
-    @apply mb-4;
-  }
-
-  .form-label {
-    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1;
-  }
-
-  .form-input {
-    @apply w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm
-    focus:outline-none focus:ring-2 focus:ring-green-fairway focus:border-transparent
-    disabled:opacity-50 disabled:cursor-not-allowed
-    bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100;
-  }
-
-  .form-helper {
-    @apply mt-1 text-xs text-gray-500 dark:text-gray-400;
-  }
-
-  .form-error {
-    @apply mt-1 text-xs text-red-500 dark:text-red-400;
-  }
-
-  /* Button variants */
-  .btn {
-    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent
-    text-sm font-medium rounded-md shadow-sm
-    focus:outline-none focus:ring-2 focus:ring-offset-2
-    disabled:opacity-50 disabled:cursor-not-allowed
-    transition-colors;
-  }
-
-  .btn-primary {
-    @apply bg-green-fairway text-white 
-    hover:bg-green-dark 
-    focus:ring-green-fairway;
-  }
-
-  .btn-secondary {
-    @apply bg-sand-bunker text-gray-900 
-    hover:bg-sand-dark 
-    focus:ring-sand-bunker;
-  }
-
-  .btn-outline {
-    @apply bg-transparent border border-green-fairway text-green-fairway 
-    hover:bg-green-fairway/10 
-    focus:ring-green-fairway;
-  }
-
-  .btn-ghost {
-    @apply bg-transparent text-green-fairway 
-    hover:bg-green-fairway/10
-    focus:ring-green-fairway;
-  }
-
-  .btn-danger {
-    @apply bg-red-600 text-white 
-    hover:bg-red-700 
-    focus:ring-red-600;
-  }
-
-  /* Badge variants */
-  .badge {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-  }
-
-  .badge-primary {
-    @apply bg-green-fairway/20 text-green-fairway;
-  }
-
-  .badge-secondary {
-    @apply bg-sand-bunker/20 text-sand-dark;
-  }
-
-  .badge-success {
-    @apply bg-green-500/20 text-green-700 dark:text-green-300;
-  }
-
-  .badge-warning {
-    @apply bg-yellow-500/20 text-yellow-700 dark:text-yellow-300;
-  }
-
-  .badge-error {
-    @apply bg-red-500/20 text-red-700 dark:text-red-300;
-  }
-
-  .badge-info {
-    @apply bg-sky-500/20 text-sky-700 dark:text-sky-300;
-  }
-
-  /* Navigation */
-  .nav-link {
-    @apply px-3 py-2 text-sm font-medium rounded-md
-    hover:bg-gray-100 hover:text-green-fairway
-    dark:hover:bg-gray-800
-    transition-colors;
-  }
-
-  .nav-link-active {
-    @apply bg-green-fairway/10 text-green-fairway;
-  }
-
-  /* Mobile navigation */
-  .mobile-nav-link {
-    @apply flex flex-col items-center justify-center text-xs font-medium
-    hover:text-green-fairway transition-colors;
-  }
-
-  .mobile-nav-link-active {
-    @apply text-green-fairway;
-  }
-}
-
-@layer utilities {
-  /* Additional utilities */
-  .text-balance {
-    text-wrap: balance;
-  }
-
-  .flex-center {
-    @apply flex items-center justify-center;
-  }
-
-  .absolute-center {
-    @apply absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2;
-  }
-
-  .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Custom scrollbar */
-  .custom-scrollbar {
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-primary-500) var(--color-gray-200);
-  }
-
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background-color: var(--color-gray-200);
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background-color: var(--color-primary-500);
-    border-radius: 9999px;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-primary-700);
-  }
-
-  /* Golf-specific utilities */
-  .scorecard-grid {
-    display: grid;
-    grid-template-columns: 50px repeat(9, 1fr) 60px;
-  }
-
-  .scorecard-grid-full {
-    display: grid;
-    grid-template-columns: 50px repeat(18, 1fr) 60px;
-  }
-
-  /* Responsive padding that accounts for mobile navigation */
-  .pb-safe {
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  .dark .range-input::-moz-range-thumb {
+    @apply bg-green-400;
   }
 }

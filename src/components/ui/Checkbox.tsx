@@ -1,4 +1,3 @@
-// src/components/ui/Checkbox.tsx
 import React, { InputHTMLAttributes, forwardRef } from 'react';
 import { cn } from '@/lib/utils/cn';
 
@@ -33,8 +32,8 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
             ref={mergedRef}
             type="checkbox"
             className={cn(
-              "h-4 w-4 rounded border-gray-300 text-green-fairway",
-              "focus:ring-2 focus:ring-green-fairway focus:ring-offset-2",
+              "h-4 w-4 rounded border-gray-300 text-green-500",
+              "focus:ring-2 focus:ring-green-500 focus:ring-offset-2",
               "dark:border-gray-600 dark:bg-gray-800 dark:ring-offset-gray-950",
               "disabled:cursor-not-allowed disabled:opacity-50",
               error && "border-red-500 focus:ring-red-500",

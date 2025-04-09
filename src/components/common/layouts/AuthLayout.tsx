@@ -25,7 +25,7 @@ export function AuthLayout({
         {showLogo && (
           <div className="mb-8">
             <Link href="/" className="flex items-center">
-              <span className="text-2xl font-bold text-green-fairway">Bunkr</span>
+              <span className="text-2xl font-bold text-green-500">Bunkr</span>
             </Link>
           </div>
         )}
@@ -43,12 +43,12 @@ export function AuthLayout({
       {/* Right Panel - Background Image */}
       <div className="hidden lg:block lg:w-1/2 relative">
         {/* This would render a real image in production */}
-        <div className="absolute inset-0 bg-green-fairway/20">
+        <div className="absolute inset-0 bg-green-500/20">
           {/* Placeholder for background image that would be loaded in production */}
           <div
             className={cn(
               "w-full h-full bg-cover bg-center",
-              "bg-gradient-to-br from-green-fairway/40 to-sand-bunker/40"
+              "bg-gradient-to-br from-green-500/40 to-sand-300/40"
             )}
           ></div>
         </div>

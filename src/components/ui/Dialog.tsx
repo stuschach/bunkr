@@ -1,4 +1,3 @@
-// src/components/ui/Dialog.tsx
 import React, { Fragment, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils/cn';
@@ -84,7 +83,7 @@ export const Dialog = ({
             className={cn(
               "relative max-h-[90vh] w-full max-w-md overflow-auto rounded-lg bg-white p-6 shadow-lg dark:bg-gray-900",
               "transform transition-all duration-200 ease-in-out",
-              "animate-fade-in", // Assuming we have this animation in our global CSS
+              "animate-fade-in",
               className
             )}
             onClick={(e) => e.stopPropagation()}

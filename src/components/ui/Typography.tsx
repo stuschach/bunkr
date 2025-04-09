@@ -50,7 +50,7 @@ const Text = React.forwardRef<HTMLParagraphElement, TextProps>(
     const variantStyles = {
       default: "text-gray-900 dark:text-gray-50",
       muted: "text-gray-500 dark:text-gray-400",
-      accent: "text-green-fairway dark:text-green-light",
+      accent: "text-green-500 dark:text-green-300",
     };
     
     return (

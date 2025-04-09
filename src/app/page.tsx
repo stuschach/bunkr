@@ -6,7 +6,7 @@ export default function Home() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-6 bg-gradient-to-br from-white to-gray-100 dark:from-gray-900 dark:to-gray-950">
       <div className="max-w-4xl w-full text-center space-y-8">
-        <h1 className="text-5xl md:text-6xl font-bold text-green-fairway font-heading">
+        <h1 className="text-5xl md:text-6xl font-bold text-green-500 font-heading">
           Welcome to Bunkr
         </h1>
         

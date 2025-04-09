@@ -1,8 +1,10 @@
+// src/components/common/media/ImageUploader.tsx
 'use client';
 
 import React, { useState, useRef } from 'react';
+import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
+import { storage } from '@/lib/firebase/config';
 import { cn } from '@/lib/utils/cn';
-import { uploadFile } from '@/lib/firebase/storage';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 
@@ -29,6 +31,7 @@ export function ImageUploader({
 }: ImageUploaderProps) {
   const [image, setImage] = useState<string | null>(initialImage);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +66,7 @@ export function ImageUploader({
 
     setIsUploading(true);
     setError(null);
+    setUploadProgress(0);
 
     try {
       // Create a temporary local URL for preview
@@ -70,20 +74,58 @@ export function ImageUploader({
       setImage(localUrl);
 
       // Upload to Firebase Storage
-      const filePath = `users/${userId}/${folder}/${Date.now()}-${file.name}`;
-      const downloadUrl = await uploadFile(filePath, file);
-
-      // Revoke temporary URL to prevent memory leaks
-      URL.revokeObjectURL(localUrl);
-
-      // Set the final image URL from Firebase
-      setImage(downloadUrl);
-      onImageUploaded(downloadUrl);
+      const timestamp = Date.now();
+      const filePath = `users/${userId}/${folder}/${timestamp}-${file.name}`;
+      const storageRef = ref(storage, filePath);
+      
+      // Create upload task
+      const uploadTask = uploadBytesResumable(storageRef, file);
+      
+      // Listen for state changes, errors, and completion
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          // Get task progress
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setUploadProgress(progress);
+          console.log('Upload progress: ' + progress + '%');
+        },
+        (error) => {
+          // Handle unsuccessful uploads
+          console.error('Upload error:', error);
+          setError('Failed to upload image. Please try again.');
+          setIsUploading(false);
+          
+          // Revoke temporary URL
+          URL.revokeObjectURL(localUrl);
+          setImage(initialImage);
+        },
+        async () => {
+          // Handle successful uploads
+          try {
+            // Get the download URL
+            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+            console.log('File uploaded, download URL:', downloadUrl);
+            
+            // Revoke temporary URL
+            URL.revokeObjectURL(localUrl);
+            
+            // Set the final image URL
+            setImage(downloadUrl);
+            onImageUploaded(downloadUrl);
+          } catch (error) {
+            console.error('Error getting download URL:', error);
+            setError('Failed to process uploaded image. Please try again.');
+            setImage(initialImage);
+          } finally {
+            setIsUploading(false);
+          }
+        }
+      );
     } catch (error) {
-      console.error('Error uploading image:', error);
+      console.error('Error handling file:', error);
       setError('Failed to upload image. Please try again.');
       setImage(initialImage);
-    } finally {
       setIsUploading(false);
     }
   };
@@ -101,14 +143,19 @@ export function ImageUploader({
           aspectRatioClasses[aspectRatio],
           variantClasses[variant],
           {
-            'hover:border-green-fairway cursor-pointer': !isUploading,
+            'hover:border-green-500 cursor-pointer': !isUploading,
             'opacity-75': isUploading,
           }
         )}
         onClick={isUploading ? undefined : handleClickUpload}
       >
         {isUploading ? (
-          <LoadingSpinner size="md" color="primary" label="Uploading..." />
+          <div className="text-center">
+            <LoadingSpinner size="md" color="primary" />
+            <div className="mt-2 text-sm">
+              Uploading... {Math.round(uploadProgress)}%
+            </div>
+          </div>
         ) : image ? (
           <>
             <img 
@@ -164,7 +211,7 @@ export function ImageUploader({
         )}
       </div>
 
-      {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-sm text-red-500 dark:text-red-400">{error}</p>}
 
       <input
         type="file"

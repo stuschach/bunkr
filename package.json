@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check-colors": "grep -r \"green-fairway\\|green-dark\\|sand-bunker\\|sky-light\" ./src --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.css\""
   },
   "dependencies": {
     "@tanstack/react-query": "^5.72.0",
@@ -23,11 +24,10 @@
     "react-hook-form": "^7.55.0",
     "tailwind-merge": "^3.2.0",
     "zod": "^3.24.2",
-    "zustand": "^5.0.3"
+    "zustand": "^4.3.8"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "@tailwindcss/postcss": "^4.1.3",
     "@types/node": "^20.17.30",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.1",
@@ -36,7 +36,7 @@
     "eslint-config-next": "15.2.4",
     "prettier": "^3.5.3",
     "prettier-plugin-tailwindcss": "^0.6.11",
-    "tailwindcss": "^4",
+    "tailwindcss": "^3.4.17",
     "typescript": "^5"
   }
 }

@@ -23,7 +23,7 @@ export function LoadingSpinner({
   const colorClasses = {
     default: 'border-gray-300 border-t-gray-600 dark:border-gray-700 dark:border-t-gray-300',
     light: 'border-gray-200 border-t-white',
-    primary: 'border-green-200 border-t-green-fairway',
+    primary: 'border-green-200 border-t-green-500',
   };
 
   return (

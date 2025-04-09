@@ -37,7 +37,7 @@ const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
       <div
         ref={ref}
         className={cn(
-          "relative rounded-full overflow-hidden flex items-center justify-center bg-green-fairway/10",
+          "relative rounded-full overflow-hidden flex items-center justify-center bg-green-100 dark:bg-green-900/30",
           sizeMap[size].container,
           className
         )}
@@ -51,7 +51,7 @@ const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
             className="object-cover"
           />
         ) : (
-          <span className={cn("text-green-fairway font-medium", sizeMap[size].text)}>
+          <span className={cn("text-green-500 font-medium", sizeMap[size].text)}>
             {getInitials()}
           </span>
         )}

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useTheme } from '@/lib/contexts/ThemeContext';
 import { cn } from '@/lib/utils/cn';
@@ -26,6 +26,7 @@ const mainNavItems: NavItem[] = [
 
 export function MainNav() {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
@@ -84,13 +85,13 @@ export function MainNav() {
               }
               align="right"
             >
-              <DropdownItem onClick={() => window.location.href = `/profile/${user.uid}`}>
+              <DropdownItem onClick={() => router.push(`/profile/${user.uid}`)}>
                 My Profile
               </DropdownItem>
-              <DropdownItem onClick={() => window.location.href = '/stats'}>
+              <DropdownItem onClick={() => router.push('/stats')}>
                 My Stats
               </DropdownItem>
-              <DropdownItem onClick={() => window.location.href = '/settings'}>
+              <DropdownItem onClick={() => router.push('/settings')}>
                 Settings
               </DropdownItem>
               <DropdownItem onClick={() => logout()}>

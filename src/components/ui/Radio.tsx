@@ -1,4 +1,3 @@
-// src/components/ui/Radio.tsx
 import React, { InputHTMLAttributes, forwardRef } from 'react';
 import { cn } from '@/lib/utils/cn';
 
@@ -51,8 +50,8 @@ const RadioGroup = forwardRef<HTMLDivElement, RadioGroupProps>(
                 onChange={handleChange}
                 checked={props.value === option.value}
                 className={cn(
-                  "h-4 w-4 border-gray-300 text-green-fairway",
-                  "focus:ring-2 focus:ring-green-fairway focus:ring-offset-2",
+                  "h-4 w-4 border-gray-300 text-green-500",
+                  "focus:ring-2 focus:ring-green-500 focus:ring-offset-2",
                   "dark:border-gray-600 dark:bg-gray-800 dark:ring-offset-gray-950",
                   "disabled:cursor-not-allowed disabled:opacity-50",
                   error && "border-red-500 focus:ring-red-500"

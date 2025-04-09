@@ -7,12 +7,14 @@ import '@/styles/globals.css';
 const titillium = Titillium_Web({ 
   subsets: ['latin'],
   weight: ['200', '300', '400', '600', '700', '900'],
-  variable: '--font-titillium'
+  variable: '--font-titillium',
+  display: 'swap', // Add this for better performance
 });
 
 const inter = Inter({ 
   subsets: ['latin'],
-  variable: '--font-inter'
+  variable: '--font-inter',
+  display: 'swap', // Add this for better performance
 });
 
 export const metadata = {

@@ -3,7 +3,7 @@
 
 import React, { useEffect } from 'react';
 import { ApiProviders } from '@/lib/api/providers';
-import { useStore } from '@/store';
+import { useStore } from '@/store'; // Make sure this import matches your file structure
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/config';
@@ -12,10 +12,9 @@ import { UserProfile } from '@/types/auth';
 export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({ 
   children 
 }) => {
-  const { setUser, setAuthStatus } = useStore(state => ({
-    setUser: state.setUser,
-    setAuthStatus: state.setAuthStatus
-  }));
+  // Get actions directly from the store without using a selector
+  const setUser = useStore(state => state.setUser);
+  const setAuthStatus = useStore(state => state.setAuthStatus);
 
   // Handle authentication state changes
   useEffect(() => {
