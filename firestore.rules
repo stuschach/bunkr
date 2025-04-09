@@ -68,9 +68,9 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         // Full update by owner
         (resource.data.authorId == request.auth.uid) || 
-        // Or just updating likes/comments/likedBy fields by any signed-in user
+        // Or just updating allowed fields by any signed-in user
         (request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likes', 'comments', 'likedBy']))
+          .hasOnly(['likes', 'comments', 'likedBy', 'content', 'updatedAt', 'courseName', 'dateTime', 'maxPlayers', 'postType', 'teeTimeId']))
       );
       allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
       
@@ -143,6 +143,76 @@ service cloud.firestore {
           memberId == request.auth.uid
         );
       }
+    }
+    
+    // Tee Times
+    match /tee-times/{teeTimeId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.creatorId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.creatorId == request.auth.uid || 
+        // Allow updating player counts and status by server functions
+        (request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['currentPlayers', 'status', 'updatedAt']))
+      );
+      allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
+      
+      // Nested collections could go here if needed
+    }
+    
+    // Tee Time Players
+    match /tee-time-players/{teeTimePlayerId} {
+      allow read: if isSignedIn();
+      
+      // Allow creation by any signed-in user (for join requests)
+      allow create: if isSignedIn() && 
+        request.resource.data.userId == request.auth.uid;
+      
+      // Allow updates by tee time creator or the player themselves
+      allow update: if isSignedIn() && (
+        // Creator of the tee time can update any player status
+        get(/databases/$(database)/documents/tee-times/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid ||
+        // Players can only update their own status
+        request.resource.data.userId == request.auth.uid
+      );
+      
+      // Allow deletion by tee time creator or the player themselves
+      allow delete: if isSignedIn() && (
+        get(/databases/$(database)/documents/tee-times/$(resource.data.teeTimeId)).data.creatorId == request.auth.uid ||
+        resource.data.userId == request.auth.uid
+      );
+    }
+    
+    // User Tee Times (for quick lookups)
+    match /user-tee-times/{userId}/{teeTimeId} {
+      // Users can read their own tee times
+      allow read: if isOwner(userId);
+      
+      // Create/update/delete follows the same rules as tee-time-players
+      allow create, update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+    
+    // Tee Time Invitations
+    match /tee-time-invitations/{invitationId} {
+      // Allow read by the inviter or email recipient
+      allow read: if isSignedIn() && (
+        resource.data.invitedBy == request.auth.uid ||
+        resource.data.email == request.auth.token.email
+      );
+      
+      // Allow creation by tee time creator
+      allow create: if isSignedIn() && 
+        get(/databases/$(database)/documents/tee-times/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid;
+      
+      // Allow updates by creator or invitee (to accept/decline)
+      allow update: if isSignedIn() && (
+        resource.data.invitedBy == request.auth.uid ||
+        resource.data.email == request.auth.token.email
+      );
+      
+      // Allow deletion by creator
+      allow delete: if isSignedIn() && resource.data.invitedBy == request.auth.uid;
     }
     
     // Marketplace listings

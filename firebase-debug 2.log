@@ -1,0 +1,16 @@
+[debug] [2025-04-09T20:06:08.550Z] ----------------------------------------------------------------------
+[debug] [2025-04-09T20:06:08.552Z] Command:       /opt/homebrew/Cellar/node/23.10.0_1/bin/node /opt/homebrew/bin/firebase deploy --only firestore:rules
+[debug] [2025-04-09T20:06:08.552Z] CLI Version:   14.1.0
+[debug] [2025-04-09T20:06:08.552Z] Platform:      darwin
+[debug] [2025-04-09T20:06:08.552Z] Node Version:  v23.10.0
+[debug] [2025-04-09T20:06:08.552Z] Time:          Wed Apr 09 2025 13:06:08 GMT-0700 (Pacific Daylight Time)
+[debug] [2025-04-09T20:06:08.552Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2025-04-09T20:06:08.617Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2025-04-09T20:06:08.617Z] > authorizing via signed-in user (stuart.schachle@gmail.com)
+[debug] [2025-04-09T20:06:08.617Z] [iam] checking project bunkr-7ae23 for permissions ["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get"]
+[debug] [2025-04-09T20:06:08.617Z] Checked if tokens are valid: true, expires at: 1744231690690
+[debug] [2025-04-09T20:06:08.618Z] Checked if tokens are valid: true, expires at: 1744231690690
+[debug] [2025-04-09T20:06:08.618Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/bunkr-7ae23:testIamPermissions [none]
+[debug] [2025-04-09T20:06:08.618Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/bunkr-7ae23:testIamPermissions x-goog-quota-user=projects/bunkr-7ae23
+[debug] [2025-04-09T20:06:08.618Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/bunkr-7ae23:testIamPermissions {"permissions":["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get"]}

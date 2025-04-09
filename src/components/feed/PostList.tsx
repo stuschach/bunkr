@@ -24,6 +24,7 @@ import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { PostCard } from '@/components/feed/PostCard';
 import { RoundShareCard } from '@/components/feed/RoundShareCard';
+import { TeeTimePost } from '@/components/feed/TeeTimePost';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { Post } from '@/types/post';
 import { UserProfile } from '@/types/auth';
@@ -31,7 +32,7 @@ import { Scorecard } from '@/types/scorecard';
 
 interface PostListProps {
   filter: 'all' | 'following';
-  contentTypeFilter?: 'all' | 'posts' | 'rounds';
+  contentTypeFilter?: 'all' | 'posts' | 'rounds' | 'tee-times';
 }
 
 export function PostList({ filter, contentTypeFilter = 'all' }: PostListProps) {
@@ -133,6 +134,11 @@ export function PostList({ filter, contentTypeFilter = 'all' }: PostListProps) {
             postsQuery,
             where('postType', '==', 'regular')
           );
+        } else if (contentTypeFilter === 'tee-times') {
+          postsQuery = query(
+            postsQuery,
+            where('postType', '==', 'tee-time')
+          );
         }
       }
 
@@ -175,6 +181,11 @@ export function PostList({ filter, contentTypeFilter = 'all' }: PostListProps) {
                   postsQuery = query(
                     postsQuery,
                     where('postType', '==', 'regular')
+                  );
+                } else if (contentTypeFilter === 'tee-times') {
+                  postsQuery = query(
+                    postsQuery,
+                    where('postType', '==', 'tee-time')
                   );
                 }
               }
@@ -451,6 +462,8 @@ export function PostList({ filter, contentTypeFilter = 'all' }: PostListProps) {
             ? "No round posts found. Share your scorecards to see them here!"
             : contentTypeFilter === 'posts'
             ? "No regular posts found. Create a post to get started!"
+            : contentTypeFilter === 'tee-times'
+            ? "No tee time posts found. Create a tee time to get started!"
             : "Follow golfers or create your first post to get started!"}
         </p>
       </div>
@@ -469,6 +482,13 @@ export function PostList({ filter, contentTypeFilter = 'all' }: PostListProps) {
               onShare={() => handleShare(post.id)}
               onLike={() => handleToggleLike(post.id)}
               onComment={() => handleComment(post.id)}
+            />
+          ) : post.postType === 'tee-time' ? (
+            <TeeTimePost
+              post={post}
+              onLike={() => handleToggleLike(post.id)}
+              onComment={() => handleComment(post.id)}
+              onShare={() => handleShare(post.id)}
             />
           ) : (
             <PostCard

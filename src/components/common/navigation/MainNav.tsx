@@ -19,6 +19,7 @@ interface NavItem {
 const mainNavItems: NavItem[] = [
   { label: 'Feed', href: '/feed' },
   { label: 'Scorecard', href: '/scorecard' },
+  { label: 'Tee Times', href: '/tee-times' },
   { label: 'Stats', href: '/stats' },
   { label: 'Groups', href: '/groups' },
   { label: 'Marketplace', href: '/marketplace' },
@@ -90,6 +91,9 @@ export function MainNav() {
               </DropdownItem>
               <DropdownItem onClick={() => router.push('/stats')}>
                 My Stats
+              </DropdownItem>
+              <DropdownItem onClick={() => router.push('/tee-times/my')}>
+                My Tee Times
               </DropdownItem>
               <DropdownItem onClick={() => router.push('/settings')}>
                 Settings

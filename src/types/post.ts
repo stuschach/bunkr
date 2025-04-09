@@ -29,7 +29,7 @@ export interface Post {
   media?: Media[];
   createdAt: Date;
   updatedAt?: Date;
-  postType: 'regular' | 'round' | 'event' | 'marketplace';
+  postType: 'regular' | 'round' | 'event' | 'marketplace' | 'tee-time';
   visibility: 'public' | 'followers' | 'private';
   likes: number;
   comments: number;
@@ -40,6 +40,10 @@ export interface Post {
   roundId?: string; // Reference to a scorecard (for postType: 'round')
   eventId?: string; // Reference to an event (for postType: 'event')
   marketplaceId?: string; // Reference to a marketplace item (for postType: 'marketplace')
+  teeTimeId?: string; // Reference to a tee time (for postType: 'tee-time')
+  courseName?: string; // For tee time posts
+  dateTime?: any; // For tee time posts
+  maxPlayers?: number; // For tee time posts
 }
 
 export interface Comment {

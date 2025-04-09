@@ -18,7 +18,7 @@ export default function FeedPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [feedFilter, setFeedFilter] = useState<'all' | 'following'>('all');
-  const [contentTypeFilter, setContentTypeFilter] = useState<'all' | 'posts' | 'rounds'>('all');
+  const [contentTypeFilter, setContentTypeFilter] = useState<'all' | 'posts' | 'rounds' | 'tee-times'>('all');
 
   // Check authentication
   useEffect(() => {
@@ -73,6 +73,13 @@ export default function FeedPage() {
                 onClick={() => setContentTypeFilter('rounds')}
               >
                 Rounds
+              </Badge>
+              <Badge 
+                variant={contentTypeFilter === 'tee-times' ? 'default' : 'outline'} 
+                className={`cursor-pointer px-3 py-1 ${contentTypeFilter === 'tee-times' ? 'bg-green-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                onClick={() => setContentTypeFilter('tee-times')}
+              >
+                Tee Times
               </Badge>
             </div>
           </div>
