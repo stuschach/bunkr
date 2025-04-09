@@ -31,9 +31,10 @@ import { Scorecard } from '@/types/scorecard';
 
 interface PostListProps {
   filter: 'all' | 'following';
+  contentTypeFilter?: 'all' | 'posts' | 'rounds';
 }
 
-export function PostList({ filter }: PostListProps) {
+export function PostList({ filter, contentTypeFilter = 'all' }: PostListProps) {
   const { user } = useAuth();
   const [posts, setPosts] = useState<Post[]>([]);
   const [lastVisible, setLastVisible] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
@@ -101,7 +102,7 @@ export function PostList({ filter }: PostListProps) {
       isFetchingRef.current = true;
       setLoading(true);
 
-      console.log(`Fetching posts - isInitial: ${isInitial}, filter: ${filter}`);
+      console.log(`Fetching posts - isInitial: ${isInitial}, filter: ${filter}, contentType: ${contentTypeFilter}`);
 
       // For initial load, reset everything
       if (isInitial) {
@@ -119,6 +120,21 @@ export function PostList({ filter }: PostListProps) {
         orderBy('createdAt', 'desc'),
         limit(5)
       );
+
+      // Add filter for specific content types
+      if (contentTypeFilter !== 'all') {
+        if (contentTypeFilter === 'rounds') {
+          postsQuery = query(
+            postsQuery,
+            where('postType', '==', 'round')
+          );
+        } else if (contentTypeFilter === 'posts') {
+          postsQuery = query(
+            postsQuery,
+            where('postType', '==', 'regular')
+          );
+        }
+      }
 
       // Add filter for following if selected
       if (filter === 'following' && user) {
@@ -139,12 +155,29 @@ export function PostList({ filter }: PostListProps) {
             // Only proceed if the user is following people
             if (followingList.length > 0) {
               console.log('Filtering posts for following users:', followingList);
+              
+              // Create a new query with the following filter
               postsQuery = query(
                 collection(db, 'posts'),
                 where('authorId', 'in', followingList),
                 orderBy('createdAt', 'desc'),
                 limit(5)
               );
+              
+              // Re-apply content type filter if needed
+              if (contentTypeFilter !== 'all') {
+                if (contentTypeFilter === 'rounds') {
+                  postsQuery = query(
+                    postsQuery,
+                    where('postType', '==', 'round')
+                  );
+                } else if (contentTypeFilter === 'posts') {
+                  postsQuery = query(
+                    postsQuery,
+                    where('postType', '==', 'regular')
+                  );
+                }
+              }
             } else {
               // No following connections, return empty result
               console.log('User has no following connections');
@@ -188,6 +221,8 @@ export function PostList({ filter }: PostListProps) {
       // If no documents returned on subsequent fetch, we've reached the end
       if (!isInitial && querySnapshot.docs.length === 0) {
         setHasMore(false);
+        setLoading(false);
+        isFetchingRef.current = false;
         return;
       }
       
@@ -253,7 +288,7 @@ export function PostList({ filter }: PostListProps) {
       // Reset fetching flag
       isFetchingRef.current = false;
     }
-  }, [user, filter, lastVisible, hasMore, loading]);
+  }, [user, filter, contentTypeFilter, lastVisible, hasMore, loading]);
 
   // Initial fetch effect - runs only once when component mounts or filter changes
   useEffect(() => {
@@ -289,7 +324,7 @@ export function PostList({ filter }: PostListProps) {
         observerRef.current = null;
       }
     };
-  }, [filter]); // Remove fetchPosts from dependencies to avoid rerender loops
+  }, [filter, contentTypeFilter]); // Add contentTypeFilter as dependency
 
   // Intersection Observer setup - using a stable callback to avoid dependency loops
   useEffect(() => {
@@ -412,6 +447,10 @@ export function PostList({ filter }: PostListProps) {
         <p className="text-gray-500 dark:text-gray-400 mb-4">
           {filter === 'following'
             ? "Start following golfers to see their posts here!"
+            : contentTypeFilter === 'rounds'
+            ? "No round posts found. Share your scorecards to see them here!"
+            : contentTypeFilter === 'posts'
+            ? "No regular posts found. Create a post to get started!"
             : "Follow golfers or create your first post to get started!"}
         </p>
       </div>
@@ -419,9 +458,9 @@ export function PostList({ filter }: PostListProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {posts.map((post) => (
-        <div key={post.id}>
+        <div key={post.id} className="transition-all duration-200 hover:translate-y-[-2px]">
           {post.postType === 'round' && post.roundId ? (
             <RoundPostWrapper 
               postId={post.id} 
@@ -454,79 +493,136 @@ export function PostList({ filter }: PostListProps) {
     </div>
   );
 }
-
 // Separate component to handle fetching round data
 function RoundPostWrapper({ 
-  postId, 
-  roundId, 
-  author, 
-  onShare,
-  onLike,
-  onComment
-}: { 
-  postId: string; 
-  roundId: string; 
-  author: UserProfile; 
-  onShare: () => void;
-  onLike: () => void;
-  onComment: () => void;
-}) {
-  const [round, setRound] = useState<Scorecard | null>(null);
-  const [loading, setLoading] = useState(true);
-  const { user } = useAuth();
-
-  useEffect(() => {
-    async function fetchRound() {
+    postId, 
+    roundId, 
+    author, 
+    onShare,
+    onLike,
+    onComment
+  }: { 
+    postId: string; 
+    roundId: string; 
+    author: UserProfile; 
+    onShare: () => void;
+    onLike: () => void;
+    onComment: () => void;
+  }) {
+    const [round, setRound] = useState<Scorecard | null>(null);
+    const [fullRoundData, setFullRoundData] = useState<{ holes: any[] } | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [loadingFullData, setLoadingFullData] = useState(false);
+    const { user } = useAuth();
+    const [post, setPost] = useState<Post | null>(null);
+  
+    // Initial fetch - just get summary data
+    useEffect(() => {
+      const fetchBasicData = async () => {
+        try {
+          setLoading(true);
+          
+          // Fetch post data to get likes/comments/likedByUser
+          const postDoc = await getDoc(doc(db, 'posts', postId));
+          if (postDoc.exists()) {
+            const postData = postDoc.data();
+            setPost({
+              id: postId,
+              ...postData,
+              author,
+              createdAt: postData.createdAt?.toDate() || new Date(),
+              likedByUser: postData.likedBy?.includes(user?.uid) || false,
+              likes: postData.likes || 0,
+              comments: postData.comments || 0,
+            } as Post);
+          }
+          
+          // Fetch basic round data
+          const roundDoc = await getDoc(doc(db, 'scorecards', roundId));
+          if (roundDoc.exists()) {
+            const data = roundDoc.data();
+            
+            // Convert Firestore timestamps to Date objects
+            if (data.date && data.date instanceof Timestamp) {
+              data.date = data.date.toDate().toISOString();
+            }
+            
+            setRound({
+              id: roundDoc.id,
+              courseName: data.courseName,
+              totalScore: data.totalScore,
+              coursePar: data.coursePar,
+              date: data.date,
+              teeBox: data.teeBox,
+              stats: data.stats,
+              // Include minimal hole data for summary display
+              holes: data.holes?.slice(0, 1) || [] // Just include first hole to enable highlights
+            } as Scorecard);
+          }
+        } catch (error) {
+          console.error('Error fetching basic data:', error);
+        } finally {
+          setLoading(false);
+        }
+      };
+  
+      fetchBasicData();
+    }, [postId, roundId, author, user?.uid]);
+  
+    // Function to fetch full hole-by-hole data when expanded
+    const fetchFullRoundData = async () => {
+      if (fullRoundData || loadingFullData) return;
+      
       try {
-        setLoading(true);
-        const roundDoc = await getDoc(doc(db, 'scorecards', roundId));
+        setLoadingFullData(true);
         
+        const roundDoc = await getDoc(doc(db, 'scorecards', roundId));
         if (roundDoc.exists()) {
           const data = roundDoc.data();
           
-          // Convert Firestore timestamps to Date objects
-          if (data.date && data.date instanceof Timestamp) {
-            data.date = data.date.toDate().toISOString();
-          }
-          
-          setRound({ id: roundDoc.id, ...data } as Scorecard);
+          setFullRoundData({
+            holes: data.holes || []
+          });
         }
       } catch (error) {
-        console.error('Error fetching round data:', error);
+        console.error('Error fetching full round data:', error);
       } finally {
-        setLoading(false);
+        setLoadingFullData(false);
       }
+    };
+  
+    if (loading) {
+      return (
+        <div className="flex justify-center items-center py-4">
+          <LoadingSpinner size="md" color="primary" />
+        </div>
+      );
     }
-
-    fetchRound();
-  }, [roundId]);
-
-  if (loading) {
+  
+    if (!round || !post) {
+      return (
+        <div className="bg-white dark:bg-gray-900 rounded-lg p-4 text-center">
+          <p className="text-gray-500 dark:text-gray-400">
+            Could not load round data
+          </p>
+        </div>
+      );
+    }
+  
     return (
-      <div className="flex justify-center items-center py-4">
-        <LoadingSpinner size="sm" color="primary" />
-      </div>
+      <RoundShareCard
+        round={round}
+        fullRoundData={fullRoundData}
+        fetchFullRoundData={fetchFullRoundData}
+        loadingFullData={loadingFullData}
+        user={author}
+        postId={postId}
+        onShare={onShare}
+        onLike={onLike}
+        onComment={onComment}
+        likedByUser={post.likedByUser}
+        likes={post.likes}
+        comments={post.comments}
+      />
     );
   }
-
-  if (!round) {
-    return (
-      <div className="bg-white dark:bg-gray-900 rounded-lg p-4 text-center">
-        <p className="text-gray-500 dark:text-gray-400">
-          Could not load round data
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <RoundShareCard
-      round={round}
-      user={author}
-      postId={postId}
-      onShare={onShare}
-      onLike={onLike}
-      onComment={onComment}
-    />
-  );
-}

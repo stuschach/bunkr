@@ -1,63 +1,58 @@
 // src/types/scorecard.ts
-export interface TeeBox {
-  name: string;
-  color?: string;
-  rating: number;
-  slope: number;
-  yardage: number;
-}
-
-export interface ScoreStats {
-  totalPutts: number;
-  fairwaysHit: number;
-  fairwaysTotal: number;
-  greensInRegulation: number;
-  penalties: number;
-  eagles: number;
-  birdies: number;
-  pars: number;
-  bogeys: number;
-  doubleBogeys: number;
-  worseThanDouble: number;
-}
-
-export interface HoleData {
-  number: number;
-  par: number;
-  handicap: number;
-  yardage: number;
-  score: number;
-  putts?: number;
-  fairwayHit?: boolean | null; // null for par 3
-  girHit?: boolean;
-  penalties?: number;
-}
-
 export interface Scorecard {
   id: string;
   userId: string;
+  date: string; // ISO string
   courseName: string;
   courseId?: string;
-  date: string; // ISO string
-  teeBox: TeeBox;
-  holes: HoleData[];
-  totalScore: number;
-  coursePar: number;
-  scoreToPar: number;
-  stats: ScoreStats;
-  isPublic: boolean;
-  courseHandicap: number | null;
-  notes?: string;
-  playedWith?: string[]; // Array of user IDs
-  weatherConditions?: {
-    temperature?: number;
-    conditions?: string;
-    windSpeed?: number;
+  teeBox?: {
+    name: string;
+    color: string;
+    yardage: number;
+    rating: number;
+    slope: number;
   };
-  media?: {
-    id: string;
-    type: 'image' | 'video';
-    url: string;
-    holeNumber?: number;
-  }[];
+  coursePar: number;
+  totalScore: number;
+  handicapUsed?: number | null;
+  netScore?: number | null;
+  notes?: string | null;
+  isPublic: boolean;
+  weather?: {
+    condition: string;
+    temperature: number;
+    windSpeed: number;
+    windDirection: string;
+  };
+  stats?: {
+    fairwaysHit: number;
+    fairwaysTotal: number;
+    greensInRegulation: number;
+    totalPutts: number;
+    puttsMissedWithin6ft: number;
+    sandSaves: number;
+    sandSaveAttempts: number;
+    penalties: number;
+    eagles: number;
+    birdies: number;
+    pars: number;
+    bogeys: number;
+    doubleBogeys: number;
+    worseThanDouble: number;
+  };
+  holes: HoleScore[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface HoleScore {
+  number: number;
+  par: number;
+  yardage: number;
+  handicap: number;
+  score: number;
+  fairwayHit?: boolean | null;
+  greenInRegulation?: boolean | null;
+  putts?: number | null;
+  penalties?: number | null;
 }
