@@ -144,6 +144,8 @@ const ThemeIcon = () => (
 
 export function MobileNav() {
   const pathname = usePathname();
+  
+  // Get unread message count from the global store
   const unreadMessageCount = useStore(state => state.unreadMessageCount);
   
   // Add theme state and toggle
@@ -165,6 +167,7 @@ export function MobileNav() {
       showBadge: (count) => count > 0
     },
     { label: 'Stats', href: '/stats', icon: <StatsIcon /> },
+    { label: 'Groups', href: '/groups', icon: <GroupsIcon /> },
   ];
 
   return (

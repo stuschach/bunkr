@@ -1,6 +1,7 @@
 // src/app/layout.tsx
 import { Inter, Titillium_Web } from 'next/font/google';
 import { ProvidersWrapper } from '@/lib/contexts/ProvidersWrapper';
+import { MessageNotificationListener } from '@/components/messages/MessageNotificationListener';
 import '@/styles/globals.css';
 
 // Define fonts
@@ -31,6 +32,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${titillium.variable} ${inter.variable} font-sans`}>
         <ProvidersWrapper>
+          <MessageNotificationListener />
           {children}
         </ProvidersWrapper>
       </body>

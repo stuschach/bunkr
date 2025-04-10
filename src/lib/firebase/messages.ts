@@ -85,7 +85,8 @@ import {
       const chatData = chatDoc.data() as Omit<Chat, 'id'>;
       
       // Security check - make sure current user is a participant
-      if (!chatData.participants[auth.currentUser.uid] && !chatData.participantArray.includes(auth.currentUser.uid)) {
+      if (!chatData.participants[auth.currentUser.uid] && 
+          !chatData.participantArray.includes(auth.currentUser.uid)) {
         throw new Error('You do not have permission to view this conversation');
       }
       
@@ -109,7 +110,7 @@ import {
       };
     } catch (error) {
       console.error('Error fetching chat:', error);
-      throw new Error('Failed to load conversation');
+      throw error;
     }
   };
   
@@ -401,7 +402,7 @@ import {
   };
   
   /**
-   * Search for users to start a conversation with - UPDATED to be case-insensitive with partial matching
+   * Search for users to start a conversation with - with case-insensitive partial matching
    */
   export const searchUsers = async (searchTerm: string, maxResults: number = 10): Promise<UserProfile[]> => {
     if (!auth.currentUser) {

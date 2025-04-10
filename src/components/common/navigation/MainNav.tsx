@@ -30,6 +30,8 @@ export function MainNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  
+  // Get unread message count from the global store
   const unreadMessageCount = useStore(state => state.unreadMessageCount);
   
   // Theme state from store

@@ -10,7 +10,8 @@ import {
   sendMessage as sendMessageFirebase,
   markMessagesAsRead as markMessagesAsReadFirebase,
   deleteMessage as deleteMessageFirebase,
-  searchUsers as searchUsersFirebase
+  searchUsers as searchUsersFirebase,
+  getChatById as getChatByIdFirebase
 } from '@/lib/firebase/messages';
 
 export function useMessages() {
@@ -36,6 +37,18 @@ export function useMessages() {
       return [];
     } finally {
       setIsLoading(false);
+    }
+  }, [user]);
+
+  // Function to get chat by ID
+  const getChatById = useCallback(async (chatId: string) => {
+    if (!user) throw new Error('You must be logged in to view messages');
+    
+    try {
+      return await getChatByIdFirebase(chatId);
+    } catch (err) {
+      console.error('Error getting chat by ID:', err);
+      throw new Error('Failed to load conversation');
     }
   }, [user]);
 
@@ -145,6 +158,7 @@ export function useMessages() {
     isLoading,
     error,
     getChats,
+    getChatById,
     getOrCreateChat,
     getMessages,
     subscribeToMessages,

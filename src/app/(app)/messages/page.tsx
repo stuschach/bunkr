@@ -15,6 +15,7 @@ import { EmptyMessageState } from '@/components/messages/EmptyMessageState';
 import { NewMessageDialog } from '@/components/messages/NewMessageDialog';
 import { Message, Chat } from '@/types/messages';
 import { getChatName, getOtherParticipant } from '@/lib/utils/message-utils';
+import { useStore } from '@/store';
 
 export default function MessagesPage() {
   const router = useRouter();
@@ -30,8 +31,12 @@ export default function MessagesPage() {
     searchUsers,
     deleteMessage,
     subscribeToMessages,
-    markMessagesAsRead
+    markMessagesAsRead,
+    getChatById
   } = useMessages();
+  
+  // Get the unread message count setter from the store
+  const setUnreadMessageCount = useStore(state => state.setUnreadMessageCount);
   
   // State
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
@@ -67,6 +72,27 @@ export default function MessagesPage() {
     return counts;
   }, [allChatMessages, user]);
   
+  // Calculate total unread messages and update both page title and global store
+  const totalUnread = useMemo(() => {
+    return Object.values(unreadCounts).reduce((sum, count) => sum + count, 0);
+  }, [unreadCounts]);
+  
+  // Update page title and global unread count
+  useEffect(() => {
+    if (totalUnread > 0) {
+      document.title = `(${totalUnread}) Messages - Bunkr`;
+    } else {
+      document.title = 'Messages - Bunkr';
+    }
+    
+    // Update the global store with the latest count for navigation components
+    setUnreadMessageCount(totalUnread);
+    
+    return () => {
+      document.title = 'Bunkr - Golf Social Platform';
+    };
+  }, [totalUnread, setUnreadMessageCount]);
+  
   // Load messages for all chats to get unread counts
   useEffect(() => {
     if (!user || chats.length === 0) return;
@@ -98,11 +124,11 @@ export default function MessagesPage() {
       setIsLoadingMessages(true);
       
       try {
-        // Find the chat in the list
-        const chat = chats.find(c => c.id === selectedChatId);
+        // First try to find the chat in the local list for efficiency
+        const chatFromList = chats.find(c => c.id === selectedChatId);
         
-        if (chat) {
-          setSelectedChat(chat);
+        if (chatFromList) {
+          setSelectedChat(chatFromList);
           
           // Load messages
           const chatMessages = await getMessages(selectedChatId);
@@ -120,15 +146,10 @@ export default function MessagesPage() {
           
           return unsubscribe;
         } else {
-          // If not found, try to load it directly
-          try {
-            // In a real app with proper database structure, 
-            // you would have an API to get a chat by ID
-            // For this demo, we'll assume the chatId could be a userId
-            // and try to create a new chat
-            const otherUserId = selectedChatId;
-            
-            const chatData = await getOrCreateChat(otherUserId);
+          // If not found in the list, fetch directly from the database
+          const chatData = await getChatById(selectedChatId);
+          
+          if (chatData) {
             setSelectedChat(chatData);
             
             // Load messages
@@ -146,13 +167,16 @@ export default function MessagesPage() {
             });
             
             return unsubscribe;
-          } catch (error) {
-            console.error('Error loading chat:', error);
+          } else {
+            // Chat not found - redirect back to main messages page
+            console.error('Chat not found');
             setSelectedChatId(null);
+            router.push('/messages');
           }
         }
       } catch (error) {
         console.error('Error loading messages:', error);
+        setSelectedChatId(null);
       } finally {
         setIsLoadingMessages(false);
       }
@@ -166,7 +190,7 @@ export default function MessagesPage() {
         if (unsubscribe) unsubscribe();
       });
     };
-  }, [selectedChatId, chats, user, getMessages, subscribeToMessages, getOrCreateChat]);
+  }, [selectedChatId, chats, user, getMessages, subscribeToMessages, getChatById, router]);
   
   // Handle chat selection
   const handleChatSelect = (chatId: string) => {
@@ -238,6 +262,12 @@ export default function MessagesPage() {
           [selectedChatId]: updatedMessages
         };
       });
+      
+      // Force a recalculation of unread counts in the next render cycle
+      // This triggers the useEffect that updates the global unread message count
+      setTimeout(() => {
+        setAllChatMessages(prev => ({ ...prev }));
+      }, 0);
     } catch (error) {
       console.error('Error marking messages as read:', error);
     }
@@ -269,21 +299,6 @@ export default function MessagesPage() {
     router.push('/login?returnUrl=/messages');
     return null;
   }
-
-  // Calculate total unread messages for page title
-  const totalUnread = Object.values(unreadCounts).reduce((sum, count) => sum + count, 0);
-  // Update page title to show unread count
-  useEffect(() => {
-    if (totalUnread > 0) {
-      document.title = `(${totalUnread}) Messages - Bunkr`;
-    } else {
-      document.title = 'Messages - Bunkr';
-    }
-    
-    return () => {
-      document.title = 'Bunkr - Golf Social Platform';
-    };
-  }, [totalUnread]);
 
   return (
     <div className="container mx-auto px-4 py-6">
