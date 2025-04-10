@@ -90,11 +90,17 @@ export function useTeeTime() {
     resetError();
     
     try {
+      console.log("Creating tee time with data:", teeTimeData);
+      
+      // Use the service function which already creates a post
+      // The service already handles creating the post in the posts collection
       const teeTimeId = await createTeeTime(user.uid, teeTimeData);
+      console.log("Tee time created with ID:", teeTimeId);
+      
       return teeTimeId;
     } catch (error) {
-      setError('Failed to create tee time');
       console.error('Error creating tee time:', error);
+      setError('Failed to create tee time');
       return null;
     } finally {
       setIsLoading(false);
@@ -185,6 +191,7 @@ export function useTeeTime() {
     resetError();
     
     try {
+      // The service will update the post automatically
       await updateTeeTime(teeTimeId, user.uid, updates);
       return true;
     } catch (error) {
@@ -207,6 +214,7 @@ export function useTeeTime() {
     resetError();
     
     try {
+      // The service will update the post automatically
       await cancelTeeTime(teeTimeId, user.uid);
       return true;
     } catch (error) {

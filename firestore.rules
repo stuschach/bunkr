@@ -58,6 +58,11 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow write: if isOwner(userId);
       }
+      
+      // User's tee times (updated path to match code)
+      match /teeTimes/{teeTimeId} {
+        allow read, write: if isOwner(userId);
+      }
     }
     
     // Public posts/feed
@@ -70,7 +75,7 @@ service cloud.firestore {
         (resource.data.authorId == request.auth.uid) || 
         // Or just updating allowed fields by any signed-in user
         (request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likes', 'comments', 'likedBy', 'content', 'updatedAt', 'courseName', 'dateTime', 'maxPlayers', 'postType', 'teeTimeId']))
+          .hasOnly(['likes', 'comments', 'likedBy', 'content', 'updatedAt', 'courseName', 'dateTime', 'maxPlayers', 'postType', 'teeTimeId', 'status', 'visibility']))
       );
       allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
       
@@ -145,8 +150,8 @@ service cloud.firestore {
       }
     }
     
-    // Tee Times
-    match /tee-times/{teeTimeId} {
+    // Tee Times - UPDATED to match code path (camelCase)
+    match /teeTimes/{teeTimeId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.creatorId == request.auth.uid;
       allow update: if isSignedIn() && (
@@ -157,40 +162,40 @@ service cloud.firestore {
       );
       allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
       
-      // Nested collections could go here if needed
+      // Players subcollection
+      match /players/{playerId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && (
+          playerId == request.auth.uid || 
+          get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid
+        );
+        allow update: if isSignedIn() && (
+          get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid ||
+          playerId == request.auth.uid
+        );
+        allow delete: if isSignedIn() && (
+          get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid ||
+          playerId == request.auth.uid
+        );
+      }
     }
     
-    // Tee Time Players
+    // Keep the old path temporarily for backward compatibility
+    match /tee-times/{teeTimeId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Disable writes to the old path
+    }
+    
+    // Tee Time Players - keeping this rule for backward compatibility
     match /tee-time-players/{teeTimePlayerId} {
       allow read: if isSignedIn();
-      
-      // Allow creation by any signed-in user (for join requests)
-      allow create: if isSignedIn() && 
-        request.resource.data.userId == request.auth.uid;
-      
-      // Allow updates by tee time creator or the player themselves
-      allow update: if isSignedIn() && (
-        // Creator of the tee time can update any player status
-        get(/databases/$(database)/documents/tee-times/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid ||
-        // Players can only update their own status
-        request.resource.data.userId == request.auth.uid
-      );
-      
-      // Allow deletion by tee time creator or the player themselves
-      allow delete: if isSignedIn() && (
-        get(/databases/$(database)/documents/tee-times/$(resource.data.teeTimeId)).data.creatorId == request.auth.uid ||
-        resource.data.userId == request.auth.uid
-      );
+      allow write: if false; // Disable writes to the old collection
     }
     
-    // User Tee Times (for quick lookups)
+    // User Tee Times (for quick lookups) - keeping this rule for backward compatibility
     match /user-tee-times/{userId}/{teeTimeId} {
-      // Users can read their own tee times
       allow read: if isOwner(userId);
-      
-      // Create/update/delete follows the same rules as tee-time-players
-      allow create, update: if isOwner(userId);
-      allow delete: if isOwner(userId);
+      allow write: if false; // Disable writes to the old collection
     }
     
     // Tee Time Invitations
@@ -201,17 +206,15 @@ service cloud.firestore {
         resource.data.email == request.auth.token.email
       );
       
-      // Allow creation by tee time creator
+      // Update path reference to match code
       allow create: if isSignedIn() && 
-        get(/databases/$(database)/documents/tee-times/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid;
+        get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid;
       
-      // Allow updates by creator or invitee (to accept/decline)
       allow update: if isSignedIn() && (
         resource.data.invitedBy == request.auth.uid ||
         resource.data.email == request.auth.token.email
       );
       
-      // Allow deletion by creator
       allow delete: if isSignedIn() && resource.data.invitedBy == request.auth.uid;
     }
     

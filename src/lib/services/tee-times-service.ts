@@ -27,9 +27,10 @@ import {
     TeeTimeFilters
   } from '@/types/tee-times';
   
-  const TEE_TIMES_COLLECTION = 'tee-times';
-  const TEE_TIME_PLAYERS_COLLECTION = 'tee-time-players';
-  const USER_TEE_TIMES_COLLECTION = 'user-tee-times';
+  // Updated collection names to match Firestore rules
+  const TEE_TIMES_COLLECTION = 'teeTimes';
+  const TEE_TIME_PLAYERS_COLLECTION = 'teeTimes';
+  const USER_TEE_TIMES_COLLECTION = 'users';
   
   // Helper function to convert Firestore data to TeeTime
   const convertToTeeTime = (doc: any): TeeTime => {
@@ -76,24 +77,22 @@ import {
         updatedAt: serverTimestamp(),
       });
       
-      // Add the creator as a confirmed player
-      await addDoc(collection(db, TEE_TIME_PLAYERS_COLLECTION), {
-        teeTimeId: teeTimeRef.id,
+      // Add the creator as a confirmed player (now as a subcollection)
+      await addDoc(collection(db, TEE_TIMES_COLLECTION, teeTimeRef.id, 'players'), {
         userId: userId,
         status: 'confirmed' as PlayerStatus,
         joinedAt: serverTimestamp(),
         isCreator: true
       });
       
-      // Add reference to user's tee times
-      await addDoc(collection(db, USER_TEE_TIMES_COLLECTION), {
-        userId: userId,
+      // Add reference to user's tee times (now as a subcollection)
+      await addDoc(collection(db, USER_TEE_TIMES_COLLECTION, userId, 'teeTimes'), {
         teeTimeId: teeTimeRef.id,
         role: 'creator',
         status: 'confirmed' as PlayerStatus,
       });
       
-      // Create a very simple post without tee time specific fields first
+      // Create a post
       const postRef = await addDoc(collection(db, 'posts'), {
         authorId: userId,
         content: `I'm hosting a tee time at ${teeTimeData.courseName} on ${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. Looking for ${teeTimeData.maxPlayers - 1} more players!`,
@@ -156,13 +155,8 @@ import {
         return { teeTime: null, players: [] };
       }
       
-      // Get players
-      const playersQuery = query(
-        collection(db, TEE_TIME_PLAYERS_COLLECTION),
-        where('teeTimeId', '==', teeTimeId)
-      );
-      
-      const playersSnapshot = await getDocs(playersQuery);
+      // Get players from subcollection
+      const playersSnapshot = await getDocs(collection(db, TEE_TIMES_COLLECTION, teeTimeId, 'players'));
       const players: TeeTimePlayer[] = playersSnapshot.docs.map(doc => {
         const data = doc.data();
         return {
@@ -258,13 +252,8 @@ import {
     status?: TeeTimeStatus
   ): Promise<TeeTime[]> => {
     try {
-      // First get user tee time IDs
-      const userTeeTimesQuery = query(
-        collection(db, USER_TEE_TIMES_COLLECTION),
-        where('userId', '==', userId)
-      );
-      
-      const userTeeTimesSnapshot = await getDocs(userTeeTimesQuery);
+      // Get user tee time IDs from user's subcollection
+      const userTeeTimesSnapshot = await getDocs(collection(db, USER_TEE_TIMES_COLLECTION, userId, 'teeTimes'));
       const teeTimeIds = userTeeTimesSnapshot.docs.map(doc => doc.data().teeTimeId);
       
       if (teeTimeIds.length === 0) {
@@ -456,8 +445,7 @@ import {
         
         // Check if user is already in the tee time
         const playerQuery = query(
-          collection(db, TEE_TIME_PLAYERS_COLLECTION),
-          where('teeTimeId', '==', teeTimeId),
+          collection(db, TEE_TIMES_COLLECTION, teeTimeId, 'players'),
           where('userId', '==', userId)
         );
         
@@ -483,19 +471,17 @@ import {
           });
         }
         
-        // Add player to tee time
-        const playerRef = doc(collection(db, TEE_TIME_PLAYERS_COLLECTION));
+        // Add player to tee time (now as subcollection)
+        const playerRef = doc(collection(db, TEE_TIMES_COLLECTION, teeTimeId, 'players'));
         transaction.set(playerRef, {
-          teeTimeId: teeTimeId,
           userId: userId,
           status: playerStatus,
           joinedAt: serverTimestamp(),
         });
         
-        // Add to user tee times
-        const userTeeTimeRef = doc(collection(db, USER_TEE_TIMES_COLLECTION));
+        // Add to user tee times (now as subcollection)
+        const userTeeTimeRef = doc(collection(db, USER_TEE_TIMES_COLLECTION, userId, 'teeTimes'));
         transaction.set(userTeeTimeRef, {
-          userId: userId,
           teeTimeId: teeTimeId,
           role: 'player',
           status: playerStatus,
@@ -538,8 +524,7 @@ import {
         
         // Find the player request
         const playerQuery = query(
-          collection(db, TEE_TIME_PLAYERS_COLLECTION),
-          where('teeTimeId', '==', teeTimeId),
+          collection(db, TEE_TIMES_COLLECTION, teeTimeId, 'players'),
           where('userId', '==', playerId),
           where('status', '==', 'pending')
         );
@@ -550,7 +535,7 @@ import {
           throw new Error('Player request not found');
         }
         
-        const playerDocRef = doc(db, TEE_TIME_PLAYERS_COLLECTION, playerSnapshot.docs[0].id);
+        const playerDocRef = doc(db, TEE_TIMES_COLLECTION, teeTimeId, 'players', playerSnapshot.docs[0].id);
         
         // Update player status to confirmed
         transaction.update(playerDocRef, {
@@ -559,15 +544,14 @@ import {
         
         // Update user-tee-time record
         const userTeeTimeQuery = query(
-          collection(db, USER_TEE_TIMES_COLLECTION),
-          where('teeTimeId', '==', teeTimeId),
-          where('userId', '==', playerId)
+          collection(db, USER_TEE_TIMES_COLLECTION, playerId, 'teeTimes'),
+          where('teeTimeId', '==', teeTimeId)
         );
         
         const userTeeTimeSnapshot = await getDocs(userTeeTimeQuery);
         
         if (!userTeeTimeSnapshot.empty) {
-          const userTeeTimeDocRef = doc(db, USER_TEE_TIMES_COLLECTION, userTeeTimeSnapshot.docs[0].id);
+          const userTeeTimeDocRef = doc(db, USER_TEE_TIMES_COLLECTION, playerId, 'teeTimes', userTeeTimeSnapshot.docs[0].id);
           transaction.update(userTeeTimeDocRef, {
             status: 'confirmed',
           });
@@ -624,8 +608,7 @@ import {
         
         // Find the player record
         const playerQuery = query(
-          collection(db, TEE_TIME_PLAYERS_COLLECTION),
-          where('teeTimeId', '==', teeTimeId),
+          collection(db, TEE_TIMES_COLLECTION, teeTimeId, 'players'),
           where('userId', '==', playerId)
         );
         
@@ -637,7 +620,7 @@ import {
         
         const playerDoc = playerSnapshot.docs[0];
         const playerData = playerDoc.data();
-        const playerDocRef = doc(db, TEE_TIME_PLAYERS_COLLECTION, playerDoc.id);
+        const playerDocRef = doc(db, TEE_TIMES_COLLECTION, teeTimeId, 'players', playerDoc.id);
         
         // Only decrement player count if the player was confirmed
         let decrementPlayerCount = playerData.status === 'confirmed';
@@ -647,15 +630,14 @@ import {
         
         // Delete user-tee-time record
         const userTeeTimeQuery = query(
-          collection(db, USER_TEE_TIMES_COLLECTION),
-          where('teeTimeId', '==', teeTimeId),
-          where('userId', '==', playerId)
+          collection(db, USER_TEE_TIMES_COLLECTION, playerId, 'teeTimes'),
+          where('teeTimeId', '==', teeTimeId)
         );
         
         const userTeeTimeSnapshot = await getDocs(userTeeTimeQuery);
         
         if (!userTeeTimeSnapshot.empty) {
-          const userTeeTimeDocRef = doc(db, USER_TEE_TIMES_COLLECTION, userTeeTimeSnapshot.docs[0].id);
+          const userTeeTimeDocRef = doc(db, USER_TEE_TIMES_COLLECTION, playerId, 'teeTimes', userTeeTimeSnapshot.docs[0].id);
           transaction.delete(userTeeTimeDocRef);
         }
         
