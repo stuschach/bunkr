@@ -1,123 +1,114 @@
-import { formatDistanceToNow, format, isToday, isYesterday, isSameYear } from 'date-fns';
-import { Chat, Message } from '@/types/messages';
-import { UserProfile } from '@/types/auth';
-import { Timestamp } from 'firebase/firestore';
+// src/lib/utils/message-utils.ts
+import { format, formatDistanceToNow } from 'date-fns';
+import { Chat } from '@/types/messages';
 
-/**
- * Format a timestamp for display in message contexts
- */
-export function formatMessageTime(timestamp: Date | Timestamp | null): string {
-  if (!timestamp) return '';
-  
-  const date = timestamp instanceof Date ? timestamp : timestamp.toDate();
-  
-  if (isToday(date)) {
-    return format(date, 'h:mm a');
-  } else if (isYesterday(date)) {
-    return `Yesterday at ${format(date, 'h:mm a')}`;
-  } else if (isSameYear(date, new Date())) {
-    return format(date, 'MMM d, h:mm a');
-  } else {
-    return format(date, 'MMM d, yyyy, h:mm a');
+// Format time for message display
+export const formatMessageTime = (timestamp: any): string => {
+  if (!timestamp) {
+    return 'Just now';
   }
-}
-
-/**
- * Format a timestamp for display in chat lists 
- */
-export function formatChatListTime(timestamp: Date | Timestamp | null): string {
-  if (!timestamp) return '';
   
-  const date = timestamp instanceof Date ? timestamp : timestamp.toDate();
-  
-  if (isToday(date)) {
+  try {
+    const date = timestamp instanceof Date 
+      ? timestamp 
+      : timestamp.toDate?.() || new Date();
+    
     return format(date, 'h:mm a');
-  } else if (isYesterday(date)) {
-    return 'Yesterday';
-  } else if (isSameYear(date, new Date())) {
-    return format(date, 'MMM d');
-  } else {
-    return format(date, 'MM/dd/yy');
+  } catch (error) {
+    return 'Just now';
   }
-}
+};
 
-/**
- * Get other participant info from a chat (for 1:1 chats)
- */
-export function getOtherParticipant(chat: Chat, currentUserId: string): UserProfile | null {
+// Format time for chat list display
+export const formatChatListTime = (timestamp: any): string => {
+  if (!timestamp) {
+    return 'Just now';
+  }
+  
+  try {
+    const date = timestamp instanceof Date 
+      ? timestamp 
+      : timestamp.toDate?.() || new Date();
+    
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (date >= today) {
+      return format(date, 'h:mm a'); // Today: show time
+    } else if (date >= yesterday) {
+      return 'Yesterday'; // Yesterday: show "Yesterday"
+    } else {
+      return format(date, 'MMM d'); // Earlier: show date
+    }
+  } catch (error) {
+    return 'Just now';
+  }
+};
+
+// Get chat name based on participants
+export const getChatName = (chat: Chat, currentUserId: string): string => {
+  if (chat.title) {
+    return chat.title; // Use title for group chats
+  }
+  
+  // Get the other participant
+  const otherParticipant = getOtherParticipant(chat, currentUserId);
+  
+  if (otherParticipant) {
+    return otherParticipant.displayName || 'Unknown User';
+  }
+  
+  return 'Chat';
+};
+
+// Get chat avatar for display
+export const getChatAvatar = (chat: Chat, currentUserId: string): string | null => {
+  if (chat.isGroupChat) {
+    return null; // Group chats don't have avatars
+  }
+  
+  // Get the other participant
+  const otherParticipant = getOtherParticipant(chat, currentUserId);
+  
+  if (otherParticipant) {
+    return otherParticipant.photoURL;
+  }
+  
+  return null;
+};
+
+// Get the other participant in a one-on-one chat
+export const getOtherParticipant = (chat: Chat, currentUserId: string) => {
   if (!chat.participantProfiles) return null;
   
-  // Get the first participant who is not the current user
-  const otherUserId = Object.keys(chat.participants).find(id => id !== currentUserId);
+  // Get all participants
+  const otherParticipantIds = Object.keys(chat.participants || {})
+    .filter(id => id !== currentUserId);
   
-  if (!otherUserId) return null;
-  
-  return chat.participantProfiles[otherUserId];
-}
-
-/**
- * Get chat display name
- */
-export function getChatName(chat: Chat, currentUserId: string): string {
-  if (chat.isGroupChat && chat.title) {
-    return chat.title;
+  // Return the first other participant (only one in one-on-one chats)
+  if (otherParticipantIds.length > 0) {
+    return chat.participantProfiles[otherParticipantIds[0]];
   }
   
-  const otherParticipant = getOtherParticipant(chat, currentUserId);
-  return otherParticipant?.displayName || 'Unknown User';
-}
+  return null;
+};
 
-/**
- * Get chat avatar (for display in chat list or header)
- */
-export function getChatAvatar(chat: Chat, currentUserId: string): string | null {
-  if (chat.isGroupChat) {
-    // Group chats would have their own avatar in a real app
-    return null;
+// Check if the last message is from the current user
+export const isLastMessageFromCurrentUser = (chat: Chat, currentUserId: string): boolean => {
+  if (!chat.lastMessage) return false;
+  
+  return chat.lastMessage.senderId === currentUserId;
+};
+
+// Truncate message text for preview
+export const truncateMessage = (message: string, maxLength: number): string => {
+  if (!message) return '';
+  
+  if (message.length <= maxLength) {
+    return message;
   }
   
-  const otherParticipant = getOtherParticipant(chat, currentUserId);
-  return otherParticipant?.photoURL || null;
-}
-
-/**
- * Check if the last message in a chat was sent by the current user
- */
-export function isLastMessageFromCurrentUser(chat: Chat, currentUserId: string): boolean {
-  return chat.lastMessage?.senderId === currentUserId;
-}
-
-/**
- * Get count of unread messages in a chat
- */
-export function getUnreadMessageCount(messages: Message[], currentUserId: string): number {
-  return messages.filter(message => 
-    message.senderId !== currentUserId && 
-    (!message.readBy || !message.readBy[currentUserId])
-  ).length;
-}
-
-/**
- * Sort chats by last message time (most recent first)
- */
-export function sortChatsByRecent(chats: Chat[]): Chat[] {
-  return [...chats].sort((a, b) => {
-    const aTime = a.updatedAt ? 
-      (a.updatedAt instanceof Date ? a.updatedAt : a.updatedAt.toDate()) : 
-      new Date(0);
-    
-    const bTime = b.updatedAt ? 
-      (b.updatedAt instanceof Date ? b.updatedAt : b.updatedAt.toDate()) : 
-      new Date(0);
-    
-    return bTime.getTime() - aTime.getTime();
-  });
-}
-
-/**
- * Truncate message content for previews
- */
-export function truncateMessage(content: string, maxLength: number = 40): string {
-  if (content.length <= maxLength) return content;
-  return content.substring(0, maxLength) + '...';
-}
+  return message.substring(0, maxLength) + '...';
+};

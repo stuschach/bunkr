@@ -225,43 +225,54 @@ service cloud.firestore {
       allow update, delete: if isSignedIn() && resource.data.sellerId == request.auth.uid;
     }
     
-    // Messages - Enhanced for more functionality
+    // Messages - UPDATED for the new participantArray field
     match /messages/{chatId} {
-      // Base chat rules
-      allow create: if isSignedIn() && request.resource.data.participants[request.auth.uid] == true;
-      allow read: if isSignedIn() && resource.data.participants[request.auth.uid] == true;
+      // Base chat rules - UPDATED
+      allow create: if isSignedIn() && 
+                     request.resource.data.participants[request.auth.uid] == true &&
+                     request.resource.data.participantArray is list &&
+                     request.resource.data.participantArray.hasAny([request.auth.uid]);
       
-      // Allow updates to specific fields
+      // Allow reads if user is in participants map or participantArray
+      allow read: if isSignedIn() && 
+                   (resource.data.participants[request.auth.uid] == true ||
+                    resource.data.participantArray.hasAny([request.auth.uid]));
+      
+      // Allow updates to specific fields - UPDATED
       allow update: if isSignedIn() && 
-        resource.data.participants[request.auth.uid] == true &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'lastMessage', 'updatedAt', 'title', 'isGroupChat'
-        ]);
+                     (resource.data.participants[request.auth.uid] == true ||
+                      resource.data.participantArray.hasAny([request.auth.uid])) &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                       'lastMessage', 'updatedAt', 'title', 'isGroupChat', 'participantArray'
+                     ]);
       
       // Individual messages in thread
       match /thread/{messageId} {
-        // Allow read by any chat participant
+        // Allow read by any chat participant - UPDATED
         allow read: if isSignedIn() && 
-          get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true;
+                     (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
+                      get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid]));
         
-        // Allow create if user is a participant and they are the sender
+        // Allow create if user is a participant and they are the sender - UPDATED
         allow create: if isSignedIn() && 
-          get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true &&
-          request.resource.data.senderId == request.auth.uid;
+                       (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
+                        get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid])) &&
+                       request.resource.data.senderId == request.auth.uid;
         
-        // Allow updates only for readBy field or soft delete
+        // Allow updates only for readBy field or soft delete - UPDATED
         allow update: if isSignedIn() && 
-          get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true &&
-          (
-            // Allow sender to soft delete their own message
-            (resource.data.senderId == request.auth.uid && 
-             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'content'])) ||
-            
-            // Allow any participant to mark as read
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'readBy'
-            ])
-          );
+                       (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
+                        get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid])) &&
+                       (
+                         // Allow sender to soft delete their own message
+                         (resource.data.senderId == request.auth.uid && 
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'content'])) ||
+                         
+                         // Allow any participant to mark as read
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                           'readBy'
+                         ])
+                       );
         
         // Hard delete limited to sender only
         allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;

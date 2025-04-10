@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
-import { Chat, Message } from '@/types/messages';
+import { Chat } from '@/types/messages';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/utils/cn';
@@ -33,10 +33,19 @@ export function ChatList({
 
   // Sort chats by recency (most recent first)
   const sortedChats = [...chats].sort((a, b) => {
-    const aTime = a.updatedAt ? 
-      (a.updatedAt instanceof Date ? a.updatedAt : a.updatedAt.toDate()).getTime() : 0;
-    const bTime = b.updatedAt ? 
-      (b.updatedAt instanceof Date ? b.updatedAt : b.updatedAt.toDate()).getTime() : 0;
+    // FIX: Safe access to timestamps
+    const aTime = a.updatedAt 
+      ? (a.updatedAt instanceof Date 
+          ? a.updatedAt 
+          : a.updatedAt.toDate?.() || new Date()).getTime() 
+      : 0;
+    
+    const bTime = b.updatedAt 
+      ? (b.updatedAt instanceof Date 
+          ? b.updatedAt 
+          : b.updatedAt.toDate?.() || new Date()).getTime() 
+      : 0;
+    
     return bTime - aTime;
   });
 

@@ -26,10 +26,10 @@ import {
     }
     
     try {
-      // Query chats where the current user is a participant
+      // Use participantArray with array-contains instead of dynamic field path
       const chatsQuery = query(
         collection(db, 'messages'),
-        where(`participants.${auth.currentUser.uid}`, '==', true),
+        where('participantArray', 'array-contains', auth.currentUser.uid),
         orderBy('updatedAt', 'desc')
       );
       
@@ -85,7 +85,7 @@ import {
       const chatData = chatDoc.data() as Omit<Chat, 'id'>;
       
       // Security check - make sure current user is a participant
-      if (!chatData.participants[auth.currentUser.uid]) {
+      if (!chatData.participants[auth.currentUser.uid] && !chatData.participantArray.includes(auth.currentUser.uid)) {
         throw new Error('You do not have permission to view this conversation');
       }
       
@@ -129,16 +129,22 @@ import {
       // Check if a chat already exists between these users
       const existingChatQuery = query(
         collection(db, 'messages'),
-        where(`participants.${auth.currentUser.uid}`, '==', true),
-        where(`participants.${otherUserId}`, '==', true)
+        where('participantArray', 'array-contains', auth.currentUser.uid)
       );
       
       const existingChatSnapshot = await getDocs(existingChatQuery);
       
+      // Filter chats to find one with both users
+      const matchingChat = existingChatSnapshot.docs.find(doc => {
+        const data = doc.data();
+        return data.participants && 
+               data.participants[otherUserId] === true &&
+               data.participantArray.includes(otherUserId);
+      });
+      
       // If a chat exists, return it
-      if (!existingChatSnapshot.empty) {
-        const chatDoc = existingChatSnapshot.docs[0];
-        const chatData = chatDoc.data() as Omit<Chat, 'id'>;
+      if (matchingChat) {
+        const chatData = matchingChat.data() as Omit<Chat, 'id'>;
         
         // Get the other user's profile
         const otherUserDoc = await getDoc(doc(db, 'users', otherUserId));
@@ -149,18 +155,19 @@ import {
         }
         
         return {
-          id: chatDoc.id,
+          id: matchingChat.id,
           ...chatData,
           participantProfiles
         };
       }
       
-      // If no chat exists, create one
+      // If no chat exists, create one with both the map and array fields
       const newChatData = {
         participants: {
           [auth.currentUser.uid]: true,
           [otherUserId]: true
         },
+        participantArray: [auth.currentUser.uid, otherUserId],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         isGroupChat: false
@@ -205,7 +212,13 @@ import {
       
       const chatData = chatDoc.data();
       
-      if (!chatData.participants[auth.currentUser.uid]) {
+      // Check if user is a participant using either the map or array
+      const isParticipant = chatData.participants && 
+                           chatData.participants[auth.currentUser.uid] === true ||
+                           chatData.participantArray && 
+                           chatData.participantArray.includes(auth.currentUser.uid);
+      
+      if (!isParticipant) {
         throw new Error('You do not have permission to view this conversation');
       }
       
@@ -287,7 +300,13 @@ import {
       
       const chatData = chatDoc.data();
       
-      if (!chatData.participants[auth.currentUser.uid]) {
+      // Check if user is a participant using either the map or array
+      const isParticipant = chatData.participants && 
+                           chatData.participants[auth.currentUser.uid] === true ||
+                           chatData.participantArray && 
+                           chatData.participantArray.includes(auth.currentUser.uid);
+      
+      if (!isParticipant) {
         throw new Error('You do not have permission to send messages in this conversation');
       }
       
@@ -382,7 +401,7 @@ import {
   };
   
   /**
-   * Search for users to start a conversation with
+   * Search for users to start a conversation with - UPDATED to be case-insensitive with partial matching
    */
   export const searchUsers = async (searchTerm: string, maxResults: number = 10): Promise<UserProfile[]> => {
     if (!auth.currentUser) {
@@ -394,20 +413,25 @@ import {
     }
     
     try {
-      // Query for users whose display name contains the search term
+      // Fetch users and filter client-side for case-insensitive partial matching
       const usersQuery = query(
         collection(db, 'users'),
-        where('displayName', '>=', searchTerm),
-        where('displayName', '<=', searchTerm + '\uf8ff'),
-        limit(maxResults)
+        limit(100) // Adjust based on expected user count
       );
       
       const usersSnapshot = await getDocs(usersQuery);
       
-      // Filter out the current user
+      // Filter results on the client side
       return usersSnapshot.docs
         .map(doc => doc.data() as UserProfile)
-        .filter(profile => profile.uid !== auth.currentUser!.uid);
+        .filter(profile => 
+          // Filter out current user
+          profile.uid !== auth.currentUser!.uid && 
+          // Case-insensitive partial matching on displayName
+          profile.displayName && 
+          profile.displayName.toLowerCase().includes(searchTerm.toLowerCase())
+        )
+        .slice(0, maxResults); // Limit results to requested max
     } catch (error) {
       console.error('Error searching users:', error);
       throw new Error('Failed to search users');

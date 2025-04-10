@@ -77,9 +77,10 @@ export function MessageThread({
 
   // Check if we should show a date divider before this message
   const shouldShowDateDivider = (message: Message, index: number) => {
+    // FIX: Add safe access to toDate with fallback
     const messageDate = message.createdAt instanceof Date 
       ? message.createdAt 
-      : message.createdAt.toDate();
+      : message.createdAt?.toDate?.() || new Date();
     
     // Format date as YYYY-MM-DD for comparison
     const dateKey = format(messageDate, 'yyyy-MM-dd');
@@ -95,9 +96,10 @@ export function MessageThread({
     
     // Check if the date is different from the previous message
     const prevMessage = messages[index - 1];
+    // FIX: Add safe access to toDate with fallback
     const prevDate = prevMessage.createdAt instanceof Date 
       ? prevMessage.createdAt 
-      : prevMessage.createdAt.toDate();
+      : prevMessage.createdAt?.toDate?.() || new Date();
     
     if (!isSameDay(messageDate, prevDate)) {
       setShownDates(prev => new Set(prev).add(dateKey));
@@ -139,9 +141,10 @@ export function MessageThread({
             const isCurrentUser = message.senderId === currentUserId;
             const participant = getParticipantInfo(message.senderId);
             const showDateDivider = shouldShowDateDivider(message, index);
+            // FIX: Add safe access to toDate with fallback
             const messageDate = message.createdAt instanceof Date 
               ? message.createdAt 
-              : message.createdAt.toDate();
+              : message.createdAt?.toDate?.() || new Date();
             
             return (
               <React.Fragment key={message.id}>
@@ -187,7 +190,8 @@ export function MessageThread({
                       )}
                       
                       <div className="mt-1 text-xs opacity-70 text-right">
-                        {formatMessageTime(message.createdAt)}
+                        {/* FIX: Use safe time formatting */}
+                        {formatSafeMessageTime(message.createdAt)}
                       </div>
                     </div>
                     
@@ -225,4 +229,21 @@ export function MessageThread({
       )}
     </div>
   );
+}
+
+// FIX: Safe message time formatting function
+function formatSafeMessageTime(timestamp: any) {
+  if (!timestamp) {
+    return 'Just now';
+  }
+  
+  try {
+    const date = timestamp instanceof Date 
+      ? timestamp 
+      : timestamp.toDate?.() || new Date();
+    
+    return format(date, 'h:mm a');
+  } catch (error) {
+    return 'Just now';
+  }
 }

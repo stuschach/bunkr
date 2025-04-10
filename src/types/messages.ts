@@ -24,6 +24,7 @@ export interface MessageAttachment {
 export interface Chat {
   id: string;
   participants: { [userId: string]: boolean };
+  participantArray: string[]; // Field for more efficient querying
   createdAt: Date | Timestamp;
   updatedAt: Date | Timestamp;
   lastMessage?: {
