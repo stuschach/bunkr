@@ -1,6 +1,14 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { 
+  doc, 
+  getDoc, 
+  onSnapshot, 
+  collection, 
+  query, 
+  where, 
+  getDocs 
+} from 'firebase/firestore';
 import { 
   signIn, 
   registerUser, 
@@ -25,6 +33,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [unreadMessageCount, setUnreadMessageCount] = useState<number>(0);
 
   useEffect(() => {
     // Listen for auth state changes
@@ -73,6 +82,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     return () => unsubscribeAuth();
   }, []);
+
+  // Listen for unread messages count
+  useEffect(() => {
+    if (!user) {
+      setUnreadMessageCount(0);
+      return () => {};
+    }
+
+    // Find chats where the current user is a participant
+    const chatsQuery = query(
+      collection(db, 'messages'),
+      where(`participants.${user.uid}`, '==', true)
+    );
+
+    const unsubscribe = onSnapshot(chatsQuery, async (chatsSnapshot) => {
+      let totalUnread = 0;
+
+      // For each chat, check for unread messages
+      const unreadPromises = chatsSnapshot.docs.map(async (chatDoc) => {
+        // Get messages from this chat that are not from the current user and not read
+        const messagesQuery = query(
+          collection(db, 'messages', chatDoc.id, 'thread'),
+          where('senderId', '!=', user.uid)
+        );
+
+        try {
+          const messagesSnapshot = await getDocs(messagesQuery);
+          
+          // Count messages that don't have readBy for the current user
+          const unreadCount = messagesSnapshot.docs.reduce((count, doc) => {
+            const data = doc.data();
+            // If readBy doesn't exist or current user hasn't read it
+            if (!data.readBy || !data.readBy[user.uid]) {
+              return count + 1;
+            }
+            return count;
+          }, 0);
+          
+          return unreadCount;
+        } catch (err) {
+          console.error('Error counting unread messages:', err);
+          return 0;
+        }
+      });
+
+      // Sum up all unread messages
+      const unreadCounts = await Promise.all(unreadPromises);
+      totalUnread = unreadCounts.reduce((total, count) => total + count, 0);
+
+      setUnreadMessageCount(totalUnread);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const login = async (credentials: LoginCredentials) => {
     try {
@@ -142,6 +205,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         user,
         loading,
         error,
+        unreadMessageCount,
         login,
         register,
         loginWithGoogle,

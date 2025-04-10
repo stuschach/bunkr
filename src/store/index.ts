@@ -1,19 +1,57 @@
-// src/store/index.ts
 import { create } from 'zustand';
-import { AppState, AppActions, appSlice } from './slices/appSlice';
-import { UIState, UIActions, uiSlice } from './slices/uiSlice';
-import { UserState, UserActions, userSlice } from './slices/userSlice';
-import { logger } from './middleware';
+import { persist } from 'zustand/middleware';
+import { UserProfile } from '@/types/auth';
 
-// Define the combined store type
-export type StoreState = AppState & UIState & UserState;
-export type StoreActions = AppActions & UIActions & UserActions;
+// Define the store's state type
+interface StoreState {
+  // User and authentication
+  user: UserProfile | null;
+  authStatus: 'loading' | 'authenticated' | 'unauthenticated';
+  setUser: (user: UserProfile | null) => void;
+  setAuthStatus: (status: 'loading' | 'authenticated' | 'unauthenticated') => void;
+  
+  // Theme
+  theme: 'light' | 'dark' | 'system';
+  setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  
+  // Network status
+  isOnline: boolean;
+  setIsOnline: (isOnline: boolean) => void;
+  
+  // Messages
+  unreadMessageCount: number;
+  setUnreadMessageCount: (count: number) => void;
+}
 
-// Create the store with all slices
-export const useStore = create<StoreState & StoreActions>()(
-  logger((...args) => ({
-    ...appSlice(...args),
-    ...uiSlice(...args),
-    ...userSlice(...args),
-  }))
+// Create the store
+export const useStore = create<StoreState>()(
+  persist(
+    (set) => ({
+      // User and authentication
+      user: null,
+      authStatus: 'loading',
+      setUser: (user) => set({ user }),
+      setAuthStatus: (authStatus) => set({ authStatus }),
+      
+      // Theme
+      theme: 'system',
+      setTheme: (theme) => set({ theme }),
+      
+      // Network status
+      isOnline: true,
+      setIsOnline: (isOnline) => set({ isOnline }),
+      
+      // Messages
+      unreadMessageCount: 0,
+      setUnreadMessageCount: (unreadMessageCount) => set({ unreadMessageCount }),
+    }),
+    {
+      name: 'bunkr-storage', // Local storage key
+      partialize: (state) => ({
+        theme: state.theme, // Only persist theme
+      }),
+    }
+  )
 );
+
+export default useStore;

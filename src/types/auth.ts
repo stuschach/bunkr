@@ -1,18 +1,16 @@
-// src/types/auth.ts
+import { User } from 'firebase/auth';
+import { Timestamp } from 'firebase/firestore';
+
 export interface UserProfile {
   uid: string;
   email: string | null;
   displayName: string | null;
   photoURL: string | null;
-  createdAt: Date | any; // Firebase Timestamp or Date
+  createdAt: Date | Timestamp;
   handicapIndex: number | null;
   homeCourse: string | null;
-  bio?: string;
-  location?: string;
-  website?: string;
-  equipment?: string;
-  favoriteCoursesIds?: string[];
   profileComplete: boolean;
+  bio?: string | null;
 }
 
 export interface LoginCredentials {
@@ -30,6 +28,7 @@ export interface AuthContextType {
   user: UserProfile | null;
   loading: boolean;
   error: string | null;
+  unreadMessageCount: number;
   login: (credentials: LoginCredentials) => Promise<void>;
   register: (data: RegistrationData) => Promise<void>;
   loginWithGoogle: () => Promise<void>;

@@ -2,13 +2,15 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
+import { useStore } from '@/store';
 import { cn } from '@/lib/utils/cn';
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ReactNode;
+  showBadge?: (count: number) => boolean;
 }
 
 // Creating simple SVG icons for each navigation item
@@ -82,6 +84,21 @@ const StatsIcon = () => (
   </svg>
 );
 
+const MessagesIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className="h-5 w-5"
+  >
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+  </svg>
+);
+
 const GroupsIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -100,35 +117,23 @@ const GroupsIcon = () => (
   </svg>
 );
 
-const MarketplaceIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className="h-5 w-5"
-  >
-    <circle cx="9" cy="21" r="1"></circle>
-    <circle cx="20" cy="21" r="1"></circle>
-    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
-  </svg>
-);
-
-const mobileNavItems: NavItem[] = [
-  { label: 'Feed', href: '/feed', icon: <HomeIcon /> },
-  { label: 'Scorecard', href: '/scorecard', icon: <ScorecardIcon /> },
-  { label: 'Tee Times', href: '/tee-times', icon: <TeeTimesIcon /> },
-  { label: 'Stats', href: '/stats', icon: <StatsIcon /> },
-  { label: 'Groups', href: '/groups', icon: <GroupsIcon /> },
-  { label: 'Shop', href: '/marketplace', icon: <MarketplaceIcon /> },
-];
-
 export function MobileNav() {
   const pathname = usePathname();
-  const router = useRouter();
+  const unreadMessageCount = useStore(state => state.unreadMessageCount);
+
+  const mobileNavItems: NavItem[] = [
+    { label: 'Feed', href: '/feed', icon: <HomeIcon /> },
+    { label: 'Scorecard', href: '/scorecard', icon: <ScorecardIcon /> },
+    { label: 'Tee Times', href: '/tee-times', icon: <TeeTimesIcon /> },
+    { 
+      label: 'Messages', 
+      href: '/messages', 
+      icon: <MessagesIcon />,
+      showBadge: (count) => count > 0
+    },
+    { label: 'Stats', href: '/stats', icon: <StatsIcon /> },
+    { label: 'Groups', href: '/groups', icon: <GroupsIcon /> },
+  ];
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-around items-center h-16 bg-white dark:bg-gray-950 border-t border-gray-200 dark:border-gray-800">
@@ -137,7 +142,7 @@ export function MobileNav() {
           key={item.href}
           href={item.href}
           className={cn(
-            'flex flex-col items-center justify-center w-full h-full text-xs',
+            'flex flex-col items-center justify-center w-full h-full text-xs relative',
             pathname === item.href || pathname?.startsWith(`${item.href}/`)
               ? 'text-green-500'
               : 'text-gray-500 hover:text-green-500'
@@ -145,6 +150,13 @@ export function MobileNav() {
         >
           <div className="mb-1">{item.icon}</div>
           <span>{item.label}</span>
+          
+          {/* Notification badge */}
+          {item.showBadge && item.showBadge(unreadMessageCount) && (
+            <span className="absolute top-1 right-1/4 flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-xs text-white">
+              {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+            </span>
+          )}
         </Link>
       ))}
     </nav>

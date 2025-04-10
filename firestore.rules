@@ -225,21 +225,54 @@ service cloud.firestore {
       allow update, delete: if isSignedIn() && resource.data.sellerId == request.auth.uid;
     }
     
-    // Messages
+    // Messages - Enhanced for more functionality
     match /messages/{chatId} {
-      allow create: if isSignedIn() && 
-        (request.resource.data.participants[request.auth.uid] == true);
+      // Base chat rules
+      allow create: if isSignedIn() && request.resource.data.participants[request.auth.uid] == true;
       allow read: if isSignedIn() && resource.data.participants[request.auth.uid] == true;
       
-      // Individual messages
+      // Allow updates to specific fields
+      allow update: if isSignedIn() && 
+        resource.data.participants[request.auth.uid] == true &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessage', 'updatedAt', 'title', 'isGroupChat'
+        ]);
+      
+      // Individual messages in thread
       match /thread/{messageId} {
-        allow read: if isSignedIn() && get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true;
+        // Allow read by any chat participant
+        allow read: if isSignedIn() && 
+          get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true;
+        
+        // Allow create if user is a participant and they are the sender
         allow create: if isSignedIn() && 
           get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true &&
           request.resource.data.senderId == request.auth.uid;
-        allow update: if false; // Messages cannot be edited
-        allow delete: if isSignedIn() && request.auth.uid == resource.data.senderId;
+        
+        // Allow updates only for readBy field or soft delete
+        allow update: if isSignedIn() && 
+          get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true &&
+          (
+            // Allow sender to soft delete their own message
+            (resource.data.senderId == request.auth.uid && 
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'content'])) ||
+            
+            // Allow any participant to mark as read
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'readBy'
+            ])
+          );
+        
+        // Hard delete limited to sender only
+        allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
       }
+    }
+    
+    // Message Attachments (for future enhancement)
+    match /message-attachments/{attachmentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.uploadedBy == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.uploadedBy == request.auth.uid;
     }
     
     // System collections (admin only)

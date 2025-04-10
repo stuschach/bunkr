@@ -5,9 +5,10 @@ import React, { useEffect } from 'react';
 import { ApiProviders } from '@/lib/api/providers';
 import { useStore } from '@/store'; // Make sure this import matches your file structure
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/config';
 import { UserProfile } from '@/types/auth';
+import { AuthProvider } from './AuthContext';
 
 export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({ 
   children 
@@ -15,6 +16,7 @@ export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({
   // Get actions directly from the store without using a selector
   const setUser = useStore(state => state.setUser);
   const setAuthStatus = useStore(state => state.setAuthStatus);
+  const setUnreadMessageCount = useStore(state => state.setUnreadMessageCount);
 
   // Handle authentication state changes
   useEffect(() => {
@@ -38,6 +40,9 @@ export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({
               ...userData
             };
             setUser(userProfile);
+            
+            // Get unread message count
+            await updateUnreadMessageCount(firebaseUser.uid);
           } else {
             // User exists in Auth but not in Firestore
             const userProfile: UserProfile = {
@@ -52,19 +57,61 @@ export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({
             };
             setUser(userProfile);
           }
+          
+          setAuthStatus('authenticated');
         } catch (error) {
           console.error("Error fetching user data:", error);
           setUser(null);
+          setAuthStatus('unauthenticated');
         }
       } else {
         // User is signed out
         setUser(null);
+        setAuthStatus('unauthenticated');
+        setUnreadMessageCount(0);
       }
     });
 
+    // Function to update unread message count
+    const updateUnreadMessageCount = async (userId: string) => {
+      try {
+        // Find chats where the user is a participant
+        const chatsQuery = query(
+          collection(db, 'messages'),
+          where(`participants.${userId}`, '==', true)
+        );
+        
+        const chatsSnapshot = await getDocs(chatsQuery);
+        let totalUnread = 0;
+        
+        // For each chat, check for unread messages
+        await Promise.all(chatsSnapshot.docs.map(async (chatDoc) => {
+          // Get messages from this chat that are not from the current user
+          const messagesQuery = query(
+            collection(db, 'messages', chatDoc.id, 'thread'),
+            where('senderId', '!=', userId)
+          );
+          
+          const messagesSnapshot = await getDocs(messagesQuery);
+          
+          // Count messages that don't have readBy for the current user
+          messagesSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (!data.readBy || !data.readBy[userId]) {
+              totalUnread++;
+            }
+          });
+        }));
+        
+        setUnreadMessageCount(totalUnread);
+      } catch (error) {
+        console.error("Error counting unread messages:", error);
+      }
+    };
+
     // Cleanup subscription
     return () => unsubscribe();
-  }, [setUser, setAuthStatus]);
+  }, [setUser, setAuthStatus, setUnreadMessageCount]);
 
   // Apply theme based on store settings
   useEffect(() => {
@@ -104,8 +151,10 @@ export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   return (
-    <ApiProviders>
-      {children}
-    </ApiProviders>
+    <AuthProvider>
+      <ApiProviders>
+        {children}
+      </ApiProviders>
+    </AuthProvider>
   );
 };
