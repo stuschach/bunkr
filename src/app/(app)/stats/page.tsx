@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { collection, query, where, orderBy, getDocs, limit } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, limit, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
@@ -19,6 +19,7 @@ import { HandicapAnalysis } from '@/components/stats/HandicapAnalysis';
 import { HoleTypeAnalysis } from '@/components/stats/HoleTypeAnalysis';
 import { RoundDetails } from '@/components/stats/RoundDetails';
 import { Scorecard } from '@/types/scorecard';
+import { UserProfile } from '@/types/auth';
 
 export default function StatsPage() {
   const router = useRouter();
@@ -29,8 +30,9 @@ export default function StatsPage() {
   const [courseFilter, setCourseFilter] = useState('all');
   const [courses, setCourses] = useState<{id: string, name: string}[]>([]);
   const [showEmptyState, setShowEmptyState] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  // Fetch user's rounds
+  // Fetch user's profile and rounds
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
@@ -38,9 +40,28 @@ export default function StatsPage() {
       return;
     }
 
-    const loadRounds = async () => {
+    const loadUserData = async () => {
       setIsLoading(true);
       try {
+        // Fetch user profile to get handicap index
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          setUserProfile({
+            uid: userDocSnap.id,
+            email: userData.email || null,
+            displayName: userData.displayName || null,
+            photoURL: userData.photoURL || null,
+            createdAt: userData.createdAt || new Date(),
+            handicapIndex: userData.handicapIndex || null,
+            homeCourse: userData.homeCourse || null,
+            profileComplete: userData.profileComplete || false,
+            bio: userData.bio || null
+          });
+        }
+
         // Build query based on filters
         let roundsQuery = query(
           collection(db, 'scorecards'),
@@ -96,13 +117,13 @@ export default function StatsPage() {
         
         setCourses(uniqueCourses);
       } catch (error) {
-        console.error('Error loading rounds:', error);
+        console.error('Error loading user data:', error);
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadRounds();
+    loadUserData();
   }, [user, authLoading, router, timeRange, courseFilter]);
 
   // Loading state
@@ -188,9 +209,12 @@ export default function StatsPage() {
         </div>
       </div>
 
-      {/* Stats Overview */}
+      {/* Stats Overview - Now passing the user's handicap index */}
       <div className="mb-8">
-        <StatsOverview rounds={rounds} />
+        <StatsOverview 
+          rounds={rounds} 
+          userHandicapIndex={userProfile?.handicapIndex} 
+        />
       </div>
 
       {/* Detailed Stats Tabs */}
@@ -210,7 +234,10 @@ export default function StatsPage() {
             icon: <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
             </svg>,
-            content: <HandicapAnalysis rounds={rounds} />
+            content: <HandicapAnalysis 
+              rounds={rounds} 
+              userHandicapIndex={userProfile?.handicapIndex} 
+            />
           },
           {
             id: 'holeTypes',

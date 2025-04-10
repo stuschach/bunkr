@@ -12,6 +12,7 @@ import {
 
 interface HandicapAnalysisProps {
   rounds: Scorecard[];
+  userHandicapIndex?: number | null; // New prop to get handicap from Firebase user document
 }
 
 // Define interfaces for data structures
@@ -28,7 +29,7 @@ interface HandicapDataResult {
   countingRounds: Scorecard[];
 }
 
-export function HandicapAnalysis({ rounds }: HandicapAnalysisProps) {
+export function HandicapAnalysis({ rounds, userHandicapIndex }: HandicapAnalysisProps) {
   const [targetHandicap, setTargetHandicap] = useState<number | null>(null);
   
   // Calculate handicap history
@@ -66,10 +67,11 @@ export function HandicapAnalysis({ rounds }: HandicapAnalysisProps) {
       }
     });
     
-    // Get the current handicap (most recent)
-    const currentHandicap = handicapHistory.length > 0 && handicapHistory[handicapHistory.length - 1].handicap !== null
-      ? handicapHistory[handicapHistory.length - 1].handicap
-      : null;
+    // Use the handicap from the user profile (from Firebase) if provided,
+    // otherwise calculate from rounds as a fallback
+    const currentHandicap = userHandicapIndex !== undefined ? userHandicapIndex : 
+                            handicapHistory.length > 0 && handicapHistory[handicapHistory.length - 1].handicap !== null ?
+                            handicapHistory[handicapHistory.length - 1].handicap : null;
     
     // Calculate potential handicap (what would happen if you shot a really good score)
     let potentialHandicap = null;
@@ -146,7 +148,7 @@ export function HandicapAnalysis({ rounds }: HandicapAnalysisProps) {
       potential: potentialHandicap,
       countingRounds
     };
-  }, [rounds]);
+  }, [rounds, userHandicapIndex]); // Add userHandicapIndex to dependency array
 
   // Set target handicap based on current if not already set
   React.useEffect(() => {

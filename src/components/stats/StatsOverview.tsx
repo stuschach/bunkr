@@ -6,9 +6,10 @@ import { formatHandicapIndex } from '@/lib/utils/formatting';
 
 interface StatsOverviewProps {
   rounds: Scorecard[];
+  userHandicapIndex?: number | null; // New prop to accept user handicap index from Firebase
 }
 
-export function StatsOverview({ rounds }: StatsOverviewProps) {
+export function StatsOverview({ rounds, userHandicapIndex }: StatsOverviewProps) {
   // Calculate overview stats
   const stats = useMemo(() => {
     if (!rounds.length) return null;
@@ -53,8 +54,8 @@ export function StatsOverview({ rounds }: StatsOverviewProps) {
       return roundDate.getFullYear() === currentYear;
     }).length;
     
-    // Calculate handicap (use most recent if available)
-    const handicapIndex = sortedRounds[0]?.handicapUsed || null;
+    // Use the handicap index from the user profile instead of calculating from rounds
+    const handicapIndex = userHandicapIndex;
     
     // Calculate FIR, GIR, and putts per round averages
     const fairwaysHit = rounds.reduce((sum, round) => sum + (round.stats?.fairwaysHit || 0), 0);
@@ -106,7 +107,7 @@ export function StatsOverview({ rounds }: StatsOverviewProps) {
       bestHole,
       worstHole
     };
-  }, [rounds]);
+  }, [rounds, userHandicapIndex]); // Added userHandicapIndex to dependency array
   
   if (!stats) return null;
 
