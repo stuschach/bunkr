@@ -18,6 +18,9 @@ export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({
   const setAuthStatus = useStore(state => state.setAuthStatus);
   const setUnreadMessageCount = useStore(state => state.setUnreadMessageCount);
 
+  // Get theme from store - this makes the component react to theme changes
+  const theme = useStore(state => state.theme);
+
   // Handle authentication state changes
   useEffect(() => {
     setAuthStatus('loading');
@@ -113,26 +116,35 @@ export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({
     return () => unsubscribe();
   }, [setUser, setAuthStatus, setUnreadMessageCount]);
 
-  // Apply theme based on store settings
+  // Apply theme based on store settings - UPDATED to react to theme changes
   useEffect(() => {
-    const theme = useStore.getState().theme;
-    const applyTheme = () => {
+    // Get the document element
+    const root = document.documentElement;
+    
+    // Remove both classes to start fresh
+    root.classList.remove('light', 'dark');
+    
+    // Apply the right theme
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else if (theme === 'light') {
+      root.classList.add('light');
+    } else {
+      // For 'system', check user preference
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const isDark = theme === 'dark' || (theme === 'system' && prefersDark);
+      root.classList.add(prefersDark ? 'dark' : 'light');
       
-      document.documentElement.classList.toggle('dark', isDark);
-    };
-
-    applyTheme();
-
-    // Listen for system theme changes
-    if (theme === 'system') {
+      // Set up media query listener for system theme changes
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const handler = () => applyTheme();
+      const handler = (e: MediaQueryListEvent) => {
+        root.classList.remove('light', 'dark');
+        root.classList.add(e.matches ? 'dark' : 'light');
+      };
+      
       mediaQuery.addEventListener('change', handler);
       return () => mediaQuery.removeEventListener('change', handler);
     }
-  }, []);
+  }, [theme]); // Now this effect runs whenever theme changes
 
   // Monitor online/offline status
   useEffect(() => {

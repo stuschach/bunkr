@@ -1,3 +1,4 @@
+// src/components/common/navigation/MainNav.tsx
 'use client';
 
 import React from 'react';
@@ -30,9 +31,12 @@ export function MainNav() {
   const router = useRouter();
   const { user, logout } = useAuth();
   const unreadMessageCount = useStore(state => state.unreadMessageCount);
+  
+  // Theme state from store
   const theme = useStore(state => state.theme);
   const setTheme = useStore(state => state.setTheme);
 
+  // Fixed toggle handler
   const toggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark');
   };

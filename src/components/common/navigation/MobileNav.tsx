@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useStore } from '@/store';
 import { cn } from '@/lib/utils/cn';
+import { Toggle } from '@/components/ui/Toggle';
 
 interface NavItem {
   label: string;
@@ -117,9 +118,41 @@ const GroupsIcon = () => (
   </svg>
 );
 
+// Theme icon component
+const ThemeIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className="h-5 w-5"
+  >
+    <circle cx="12" cy="12" r="5"></circle>
+    <line x1="12" y1="1" x2="12" y2="3"></line>
+    <line x1="12" y1="21" x2="12" y2="23"></line>
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+    <line x1="1" y1="12" x2="3" y2="12"></line>
+    <line x1="21" y1="12" x2="23" y2="12"></line>
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+  </svg>
+);
+
 export function MobileNav() {
   const pathname = usePathname();
   const unreadMessageCount = useStore(state => state.unreadMessageCount);
+  
+  // Add theme state and toggle
+  const theme = useStore(state => state.theme);
+  const setTheme = useStore(state => state.setTheme);
+
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  };
 
   const mobileNavItems: NavItem[] = [
     { label: 'Feed', href: '/feed', icon: <HomeIcon /> },
@@ -132,7 +165,6 @@ export function MobileNav() {
       showBadge: (count) => count > 0
     },
     { label: 'Stats', href: '/stats', icon: <StatsIcon /> },
-    { label: 'Groups', href: '/groups', icon: <GroupsIcon /> },
   ];
 
   return (
@@ -159,6 +191,51 @@ export function MobileNav() {
           )}
         </Link>
       ))}
+      
+      {/* Theme toggle button */}
+      <div 
+        className="flex flex-col items-center justify-center w-full h-full text-xs relative cursor-pointer"
+        onClick={toggleTheme}
+      >
+        <div className="mb-1">
+          {theme === 'dark' ? (
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-5 w-5"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          ) : (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-5 w-5"
+            >
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+          )}
+        </div>
+        <span>Theme</span>
+      </div>
     </nav>
   );
 }
