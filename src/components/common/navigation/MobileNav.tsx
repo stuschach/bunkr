@@ -157,7 +157,7 @@ export function MobileNav() {
   };
 
   const mobileNavItems: NavItem[] = [
-    { label: 'Feed', href: '/feed', icon: <HomeIcon /> },
+    { label: 'Dashboard', href: '/dashboard', icon: <HomeIcon /> },
     { label: 'Scorecard', href: '/scorecard', icon: <ScorecardIcon /> },
     { label: 'Tee Times', href: '/tee-times', icon: <TeeTimesIcon /> },
     { 

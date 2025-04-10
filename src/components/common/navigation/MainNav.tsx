@@ -47,7 +47,7 @@ export function MainNav() {
     <header className="sticky top-0 z-50 w-full border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
       <div className="container mx-auto px-4 flex h-16 items-center justify-between">
         <div className="flex items-center">
-          <Link href="/" className="flex items-center mr-8">
+          <Link href="/dashboard" className="flex items-center mr-8">
             <span className="text-xl font-bold text-green-500">Bunkr</span>
           </Link>
 

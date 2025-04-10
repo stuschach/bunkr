@@ -1,4 +1,5 @@
-import React, { Fragment, ReactNode } from 'react';
+// src/components/ui/Dialog.tsx
+import React, { Fragment, ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils/cn';
 
@@ -45,41 +46,38 @@ export const Dialog = ({
   closeOnEsc = true,
 }: DialogProps) => {
   const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => {
+  
+  // Simple mount effect without dependencies on 'open'
+  useEffect(() => {
     setMounted(true);
+    return () => setMounted(false);
+  }, []);
+  
+  // Separate effect for keyboard handler
+  useEffect(() => {
+    if (!open || !closeOnEsc) return;
     
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (closeOnEsc && e.key === 'Escape') {
+      if (e.key === 'Escape') {
         onClose();
       }
     };
     
-    if (open && closeOnEsc) {
-      document.addEventListener('keydown', handleKeyDown);
-    }
-    
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose, closeOnEsc]);
-
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (closeOnClickOutside && e.target === e.currentTarget) {
-      onClose();
-    }
-  };
 
   if (!mounted) return null;
 
+  // Only render backdrop and content when open
   return createPortal(
-    <Fragment>
+    <>
       {open && (
-        <div
+        <div 
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-          onClick={handleBackdropClick}
+          onClick={closeOnClickOutside ? onClose : undefined}
         >
-          <div
+          <div 
             className={cn(
               "relative max-h-[90vh] w-full max-w-md overflow-auto rounded-lg bg-white p-6 shadow-lg dark:bg-gray-900",
               "transform transition-all duration-200 ease-in-out",
@@ -92,7 +90,7 @@ export const Dialog = ({
           </div>
         </div>
       )}
-    </Fragment>,
+    </>,
     document.body
   );
 };
