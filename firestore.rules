@@ -162,7 +162,7 @@ service cloud.firestore {
       );
       allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
       
-      // Players subcollection
+      // Players subcollection - UPDATED to use userId as document ID
       match /players/{playerId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && (
@@ -198,12 +198,12 @@ service cloud.firestore {
       allow write: if false; // Disable writes to the old collection
     }
     
-    // Tee Time Invitations
+    // Tee Time Invitations - UPDATED to use invitedUserId instead of email
     match /tee-time-invitations/{invitationId} {
-      // Allow read by the inviter or email recipient
+      // Allow read by the inviter or invited user
       allow read: if isSignedIn() && (
         resource.data.invitedBy == request.auth.uid ||
-        resource.data.email == request.auth.token.email
+        resource.data.invitedUserId == request.auth.uid
       );
       
       // Update path reference to match code
@@ -212,7 +212,7 @@ service cloud.firestore {
       
       allow update: if isSignedIn() && (
         resource.data.invitedBy == request.auth.uid ||
-        resource.data.email == request.auth.token.email
+        resource.data.invitedUserId == request.auth.uid
       );
       
       allow delete: if isSignedIn() && resource.data.invitedBy == request.auth.uid;

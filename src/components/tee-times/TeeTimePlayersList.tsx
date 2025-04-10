@@ -1,7 +1,7 @@
 // src/components/tee-times/TeeTimePlayersList.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { format } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -18,7 +18,8 @@ interface TeeTimePlayersListProps {
   isCreator: boolean;
   onApprovePlayer?: (playerId: string) => Promise<void>;
   onRemovePlayer?: (playerId: string) => Promise<void>;
-  onInvitePlayer?: (email: string) => Promise<void>;
+  onInvitePlayer?: (userId: string) => Promise<void>;
+  onSearchUsers?: (query: string) => Promise<UserProfile[]>;
 }
 
 export function TeeTimePlayersList({
@@ -27,25 +28,50 @@ export function TeeTimePlayersList({
   isCreator,
   onApprovePlayer,
   onRemovePlayer,
-  onInvitePlayer
+  onInvitePlayer,
+  onSearchUsers
 }: TeeTimePlayersListProps) {
   const [showInviteDialog, setShowInviteDialog] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [isInviting, setIsInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
   
-  const handleInviteSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!inviteEmail.trim()) {
-      setInviteError('Please enter an email address');
+  // Search users when query changes
+  const searchUsers = useCallback(async (query: string) => {
+    if (!onSearchUsers || query.trim().length < 3) {
+      setSearchResults([]);
       return;
     }
     
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(inviteEmail)) {
-      setInviteError('Please enter a valid email address');
+    try {
+      const results = await onSearchUsers(query);
+      
+      // Filter out users who are already in the tee time
+      const filteredResults = results.filter(user => 
+        !players.some(player => player.userId === user.uid)
+      );
+      
+      setSearchResults(filteredResults);
+    } catch (error) {
+      console.error('Error searching users:', error);
+      setSearchResults([]);
+    }
+  }, [onSearchUsers, players]);
+  
+  // Handle user selection
+  const handleSelectUser = (user: UserProfile) => {
+    setSelectedUser(user);
+    setInviteError('');
+  };
+  
+  // Handle invite submission
+  const handleInviteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!selectedUser) {
+      setInviteError('Please select a user to invite');
       return;
     }
     
@@ -54,9 +80,13 @@ export function TeeTimePlayersList({
     
     try {
       if (onInvitePlayer) {
-        await onInvitePlayer(inviteEmail);
+        await onInvitePlayer(selectedUser.uid);
       }
-      setInviteEmail('');
+      
+      // Reset form
+      setSearchQuery('');
+      setSelectedUser(null);
+      setSearchResults([]);
       setShowInviteDialog(false);
     } catch (error) {
       console.error('Error inviting player:', error);
@@ -170,7 +200,7 @@ export function TeeTimePlayersList({
                           {player.profile?.displayName || 'Anonymous Player'}
                         </div>
                         <div className="text-xs text-gray-500 dark:text-gray-400">
-                          Requested {player.joinedAt instanceof Date ? 
+                          {player.invitedBy ? 'Invited' : 'Requested'} {player.joinedAt instanceof Date ? 
                             format(player.joinedAt, 'MMM d, yyyy') : 
                             'recently'}
                         </div>
@@ -221,19 +251,70 @@ export function TeeTimePlayersList({
           <form onSubmit={handleInviteSubmit}>
             <div className="space-y-4">
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Enter the email address of the player you'd like to invite to this tee time.
+                Search for players by name to invite them to this tee time.
               </p>
               
               <Input
-                label="Email Address"
-                value={inviteEmail}
+                label="Search Players"
+                value={searchQuery}
                 onChange={(e) => {
-                  setInviteEmail(e.target.value);
-                  setInviteError('');
+                  setSearchQuery(e.target.value);
+                  searchUsers(e.target.value);
                 }}
-                error={inviteError}
-                placeholder="player@example.com"
+                placeholder="Type a name to search..."
               />
+              
+              {searchResults.length > 0 && (
+                <div className="mt-2 max-h-60 overflow-y-auto rounded border border-gray-200 dark:border-gray-700">
+                  {searchResults.map(user => (
+                    <div 
+                      key={user.uid}
+                      className={`flex items-center p-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 ${
+                        selectedUser?.uid === user.uid ? 'bg-gray-100 dark:bg-gray-800' : ''
+                      }`}
+                      onClick={() => handleSelectUser(user)}
+                    >
+                      <Avatar 
+                        src={user.photoURL} 
+                        alt={user.displayName || 'User'} 
+                        size="sm" 
+                      />
+                      <div className="ml-2">
+                        <p className="font-medium">{user.displayName || 'Anonymous User'}</p>
+                        {user.homeCourse && (
+                          <p className="text-xs text-gray-500">{user.homeCourse}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {searchQuery.length > 0 && searchResults.length === 0 && (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  No users found matching "{searchQuery}"
+                </p>
+              )}
+              
+              {selectedUser && (
+                <div className="mt-4">
+                  <p className="text-sm font-medium">Selected Player:</p>
+                  <div className="flex items-center p-2 bg-gray-50 dark:bg-gray-800 rounded">
+                    <Avatar 
+                      src={selectedUser.photoURL} 
+                      alt={selectedUser.displayName || 'User'} 
+                      size="sm" 
+                    />
+                    <div className="ml-2">
+                      <p className="font-medium">{selectedUser.displayName}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {inviteError && (
+                <p className="text-sm text-red-500">{inviteError}</p>
+              )}
             </div>
           </form>
         </DialogContent>
@@ -248,6 +329,7 @@ export function TeeTimePlayersList({
           <Button
             onClick={handleInviteSubmit}
             isLoading={isInviting}
+            disabled={!selectedUser || isInviting}
           >
             Send Invitation
           </Button>

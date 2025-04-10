@@ -19,7 +19,8 @@ import {
   requestToJoinTeeTime,
   approvePlayerRequest,
   removePlayerFromTeeTime,
-  invitePlayerToTeeTime
+  invitePlayerToTeeTime,
+  searchUsersByName
 } from '@/lib/services/tee-times-service';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
@@ -298,10 +299,10 @@ export function useTeeTime() {
     }
   }, [user]);
 
-  // Invite a player to a tee time
+  // Invite a player to a tee time by userId instead of email
   const handleInvitePlayer = useCallback(async (
     teeTimeId: string,
-    email: string
+    invitedUserId: string
   ): Promise<boolean> => {
     if (!user) {
       setError('You must be logged in to invite players');
@@ -312,7 +313,7 @@ export function useTeeTime() {
     resetError();
     
     try {
-      await invitePlayerToTeeTime(teeTimeId, email, user.uid);
+      await invitePlayerToTeeTime(teeTimeId, invitedUserId, user.uid);
       return true;
     } catch (error) {
       setError('Failed to invite player');
@@ -322,6 +323,22 @@ export function useTeeTime() {
       setIsLoading(false);
     }
   }, [user]);
+
+  // Search users by name
+  const handleSearchUsers = useCallback(async (
+    query: string
+  ): Promise<UserProfile[]> => {
+    if (query.trim().length < 3) {
+      return [];
+    }
+    
+    try {
+      return await searchUsersByName(query);
+    } catch (error) {
+      console.error('Error searching users:', error);
+      return [];
+    }
+  }, []);
 
   return {
     isLoading,
@@ -339,5 +356,6 @@ export function useTeeTime() {
     approvePlayer: handleApprovePlayer,
     removePlayer: handleRemovePlayer,
     invitePlayer: handleInvitePlayer,
+    searchUsers: handleSearchUsers,
   };
 }

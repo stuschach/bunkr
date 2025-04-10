@@ -28,7 +28,8 @@ export default function TeeTimeDetails() {
     cancelTeeTime,
     approvePlayer,
     removePlayer,
-    invitePlayer
+    invitePlayer,
+    searchUsers
   } = useTeeTime();
   
   // State
@@ -184,13 +185,47 @@ export default function TeeTimeDetails() {
   };
   
   // Handle invite player
-  const handleInvitePlayer = async (email: string) => {
+  const handleInvitePlayer = async (userId: string) => {
     try {
-      const success = await invitePlayer(teeTimeId, email);
+      const success = await invitePlayer(teeTimeId, userId);
+      
+      if (success) {
+        // Get the user profile to add to the players list
+        const invitedUserProfile = players.find(p => p.userId === userId)?.profile;
+        
+        if (!invitedUserProfile) {
+          // Refresh player list to show newly invited player
+          const result = await getTeeTimeDetails(teeTimeId);
+          setPlayers(result.players);
+        } else {
+          // Add the user to players list with pending status
+          setPlayers(prev => [
+            ...prev,
+            {
+              userId: userId,
+              status: 'pending',
+              joinedAt: new Date(),
+              invitedBy: user?.uid,
+              profile: invitedUserProfile
+            }
+          ]);
+        }
+      }
+      
       return success;
     } catch (error) {
       console.error('Error inviting player:', error);
       return false;
+    }
+  };
+  
+  // Handle search users
+  const handleSearchUsers = async (query: string) => {
+    try {
+      return await searchUsers(query);
+    } catch (error) {
+      console.error('Error searching users:', error);
+      return [];
     }
   };
   
@@ -378,6 +413,7 @@ export default function TeeTimeDetails() {
             onApprovePlayer={handleApprovePlayer}
             onRemovePlayer={handleRemovePlayer}
             onInvitePlayer={handleInvitePlayer}
+            onSearchUsers={handleSearchUsers}
           />
         </div>
       </div>
