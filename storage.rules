@@ -53,7 +53,14 @@ service firebase.storage {
         get(/databases/(default)/documents/posts/$(postId)).data.authorId == request.auth.uid;
     }
     
-    // Marketplace listing images
+    // Marketplace listing images - UPDATED to match path structure
+    match /marketplace/{userId}/{listingId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) && isImage() && isValidFileSize();
+      allow delete: if isOwner(userId);
+    }
+    
+    // Keep the old marketplace path rule for backward compatibility
     match /marketplace/{listingId}/{fileName} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && 

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useStore } from '@/store';
 import { cn } from '@/lib/utils/cn';
 import { Toggle } from '@/components/ui/Toggle';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 interface NavItem {
   label: string;
@@ -100,6 +101,22 @@ const MessagesIcon = () => (
   </svg>
 );
 
+const NotificationsIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className="h-5 w-5"
+  >
+    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+  </svg>
+);
+
 const GroupsIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -166,34 +183,52 @@ export function MobileNav() {
       icon: <MessagesIcon />,
       showBadge: (count) => count > 0
     },
-    { label: 'Stats', href: '/stats', icon: <StatsIcon /> },
+    { 
+      label: 'Notifications', 
+      href: '/notifications', 
+      icon: <NotificationsIcon />, 
+    },
     { label: 'Groups', href: '/groups', icon: <GroupsIcon /> },
   ];
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-around items-center h-16 bg-white dark:bg-gray-950 border-t border-gray-200 dark:border-gray-800">
-      {mobileNavItems.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className={cn(
-            'flex flex-col items-center justify-center w-full h-full text-xs relative',
-            pathname === item.href || pathname?.startsWith(`${item.href}/`)
-              ? 'text-green-500'
-              : 'text-gray-500 hover:text-green-500'
-          )}
-        >
-          <div className="mb-1">{item.icon}</div>
-          <span>{item.label}</span>
-          
-          {/* Notification badge */}
-          {item.showBadge && item.showBadge(unreadMessageCount) && (
-            <span className="absolute top-1 right-1/4 flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-xs text-white">
-              {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
-            </span>
-          )}
-        </Link>
-      ))}
+      {mobileNavItems.map((item) => 
+        item.label === 'Notifications' ? (
+          <div 
+            key={item.href}
+            className={cn(
+              'w-full h-full',
+              pathname === item.href || pathname?.startsWith(`${item.href}/`)
+                ? 'text-green-500'
+                : 'text-gray-500'
+            )}
+          >
+            <NotificationBell variant="mobile" />
+          </div>
+        ) : (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={cn(
+              'flex flex-col items-center justify-center w-full h-full text-xs relative',
+              pathname === item.href || pathname?.startsWith(`${item.href}/`)
+                ? 'text-green-500'
+                : 'text-gray-500 hover:text-green-500'
+            )}
+          >
+            <div className="mb-1">{item.icon}</div>
+            <span>{item.label}</span>
+            
+            {/* Notification badge */}
+            {item.showBadge && item.showBadge(unreadMessageCount) && (
+              <span className="absolute top-1 right-1/4 flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-xs text-white">
+                {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+              </span>
+            )}
+          </Link>
+        )
+      )}
       
       {/* Theme toggle button */}
       <div 

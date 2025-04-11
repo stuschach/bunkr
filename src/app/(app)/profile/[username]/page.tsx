@@ -1,8 +1,9 @@
+// src/app/(app)/profile/[username]/page.tsx
 'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, getDoc, collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/config';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { ProfileStats } from '@/components/profile/ProfileStats';
@@ -11,6 +12,7 @@ import { HandicapDisplay } from '@/components/profile/HandicapDisplay';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { isFollowing } from '@/lib/firebase/connections';
 import { UserProfile } from '@/types/auth';
 
 export default function ProfilePage() {
@@ -25,107 +27,166 @@ export default function ProfilePage() {
   const username = params.username as string;
   
   // For social data
-  const [isFollowing, setIsFollowing] = useState(false);
+  const [userIsFollowing, setUserIsFollowing] = useState(false);
   const [followerCount, setFollowerCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
   const [posts, setPosts] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [bestScore, setBestScore] = useState<any>(null);
   const [averageScore, setAverageScore] = useState<number | null>(null);
-  
-  // Direct auth check
-  const [authChecked, setAuthChecked] = useState(false);
-  
-  // Check authentication state directly from Firebase
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((firebaseUser) => {
-      setAuthChecked(true);
-      if (!firebaseUser) {
-        setError("Please log in to view profiles");
-        setIsLoading(false);
-      }
-    });
+  const [loadingMessage, setLoadingMessage] = useState("Initializing...");
 
-    return () => unsubscribe();
-  }, []);
-
-  // Fetch profile data
+  // Ultra-simple fetch with no dependencies
   useEffect(() => {
-    const fetchProfileData = async () => {
+    console.log("🔄 Profile page mounted");
+    let isMounted = true;
+
+    const fetchData = async () => {
+      if (!isMounted) return;
+      
       try {
-        // Only proceed if auth check has happened
-        if (!authChecked) return;
+        // 1. Check if logged in
+        setLoadingMessage("Checking authentication...");
+        if (!auth.currentUser) {
+          console.log("❌ Not logged in");
+          setError("Please log in to view profiles");
+          setIsLoading(false);
+          return;
+        }
         
-        setIsLoading(true);
+        console.log(`✅ User authenticated: ${auth.currentUser.uid}`);
         
-        // Get user ID (use the URL parameter if available, otherwise use the current user's ID)
-        const targetUserId = username || auth.currentUser?.uid;
+        // 2. Get user ID from params
+        setLoadingMessage("Identifying profile...");
+        const targetUserId = username;
         
         if (!targetUserId) {
-          throw new Error("No user ID available");
+          console.log("❌ No user ID parameter found");
+          setError("User ID not provided");
+          setIsLoading(false);
+          return;
         }
         
-        // Fetch the user document
-        const userDoc = await getDoc(doc(db, 'users', targetUserId));
+        console.log(`🔍 Looking up profile: ${targetUserId}`);
         
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          
-          // Set profile data
-          setProfile({
-            uid: userDoc.id,
-            email: userData.email || null,
-            displayName: userData.displayName || null,
-            photoURL: userData.photoURL || null,
-            createdAt: userData.createdAt || new Date(),
-            handicapIndex: userData.handicapIndex || null,
-            homeCourse: userData.homeCourse || null,
-            profileComplete: userData.profileComplete || false,
-            bio: userData.bio || null
-          });
-          
-          // For demo purposes, set placeholder data
-          // In a real implementation, you would fetch this from the database
-          setFollowerCount(42);
-          setFollowingCount(21);
-          setPosts([]);
-          setRounds([]);
-          setAverageScore(78.5);
-          setBestScore({
-            score: 72,
-            course: "Chambers Bay",
-            date: "2024-03-15",
-            par: 72
-          });
-          
-          // Check if current user is following this profile
-          setIsFollowing(false);
-        } else {
+        // 3. Fetch user document
+        setLoadingMessage("Loading profile data...");
+        const userDocRef = doc(db, 'users', targetUserId);
+        const userDoc = await getDoc(userDocRef);
+        
+        if (!userDoc.exists()) {
+          console.log("❌ User document not found");
           setError("User profile not found");
+          setIsLoading(false);
+          return;
         }
+        
+        console.log("✅ Found user document");
+        const userData = userDoc.data();
+        
+        // 4. Process basic profile data
+        setLoadingMessage("Processing profile...");
+        if (!isMounted) return;
+        
+        const profileData: UserProfile = {
+          uid: userDoc.id,
+          email: userData.email || null,
+          displayName: userData.displayName || null,
+          photoURL: userData.photoURL || null,
+          createdAt: userData.createdAt?.toDate() || new Date(),
+          handicapIndex: userData.handicapIndex || null,
+          homeCourse: userData.homeCourse || null,
+          profileComplete: userData.profileComplete || false,
+          bio: userData.bio || null
+        };
+        
+        console.log(`📋 Profile data processed: ${profileData.displayName}`);
+        
+        // 5. Set social counts
+        const followerCountValue = userData.followerCount || 0;
+        const followingCountValue = userData.followingCount || 0;
+        
+        console.log(`👥 Follower count: ${followerCountValue}, Following count: ${followingCountValue}`);
+        
+        // 6. Check follow status if needed
+        setLoadingMessage("Checking relationship...");
+        let followStatus = false;
+        
+        if (auth.currentUser.uid !== targetUserId) {
+          try {
+            followStatus = await isFollowing(auth.currentUser.uid, targetUserId);
+            console.log(`🔗 Follow status: ${followStatus}`);
+          } catch (followErr) {
+            console.error("⚠️ Error checking follow status:", followErr);
+            // Don't fail if just the follow check fails
+          }
+        }
+        
+        // 7. Set demo data
+        setLoadingMessage("Finalizing...");
+        if (!isMounted) return;
+        
+        // 8. Update all state at once to minimize renders
+        setProfile(profileData);
+        setFollowerCount(followerCountValue);
+        setFollowingCount(followingCountValue);
+        setUserIsFollowing(followStatus);
+        setPosts([]);
+        setRounds([]);
+        setAverageScore(78.5);
+        setBestScore({
+          score: 72,
+          course: "Chambers Bay",
+          date: "2024-03-15",
+          par: 72
+        });
+        setIsLoading(false);
+        
+        console.log("✅ Profile page fully loaded");
+        
       } catch (err) {
-        console.error('Error fetching profile:', err);
-        setError(err instanceof Error ? err.message : "Failed to load profile");
-      } finally {
+        if (!isMounted) return;
+        
+        console.error("❌ Error loading profile:", err);
+        setError(`Error loading profile: ${err instanceof Error ? err.message : "Unknown error"}`);
         setIsLoading(false);
       }
     };
-    
-    fetchProfileData();
-  }, [username, authChecked]);
 
-  // Handle follow/unfollow
-  const handleToggleFollow = () => {
-    setIsFollowing(!isFollowing);
-    setFollowerCount(prevCount => isFollowing ? prevCount - 1 : prevCount + 1);
-    // In a real implementation, update the database
+    fetchData();
+
+    return () => {
+      isMounted = false;
+      console.log("🔄 Profile page unmounted");
+    };
+  }, [username]); // Only depend on username to avoid re-runs
+
+  // Handle follow state change
+  const handleFollowChange = (newFollowingState: boolean) => {
+    console.log(`👤 Follow state changed to: ${newFollowingState}`);
+    setUserIsFollowing(newFollowingState);
+  };
+  
+  // Handle follower count change
+  const handleFollowerCountChange = (newCount: number) => {
+    console.log(`👥 Follower count changed to: ${newCount}`);
+    setFollowerCount(newCount);
   };
 
   // Loading state
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center min-h-[80vh]">
+      <div className="flex flex-col justify-center items-center min-h-[80vh]">
         <LoadingSpinner size="lg" color="primary" label="Loading profile..." />
+        <p className="mt-4 text-gray-500">{loadingMessage}</p>
+        <div className="mt-8">
+          <Button 
+            variant="outline" 
+            onClick={() => window.location.reload()}
+          >
+            Reload Page
+          </Button>
+        </div>
       </div>
     );
   }
@@ -178,10 +239,11 @@ export default function ProfilePage() {
       <ProfileHeader
         profile={profile}
         isOwnProfile={isOwnProfile}
-        isFollowing={isFollowing}
+        isFollowing={userIsFollowing}
         followerCount={followerCount}
         followingCount={followingCount}
-        onToggleFollow={handleToggleFollow}
+        onFollowChange={handleFollowChange}
+        onFollowerCountChange={handleFollowerCountChange}
       />
       
       <ProfileStats

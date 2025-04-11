@@ -10,7 +10,10 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { ProfileImageUploader } from '@/components/profile/ProfileImageUploader';
 import { formatHandicapIndex } from '@/lib/utils/formatting';
+import { useMessages } from '@/lib/hooks/useMessages';
+import { useNotification } from '@/lib/contexts/NotificationContext';
 import { UserProfile } from '@/types/auth';
+import { FollowButton } from '@/components/profile/FollowButton';
 
 interface ProfileHeaderProps {
   profile: UserProfile;
@@ -18,7 +21,8 @@ interface ProfileHeaderProps {
   isFollowing?: boolean;
   followerCount: number;
   followingCount: number;
-  onToggleFollow?: () => void;
+  onFollowChange?: (isFollowing: boolean) => void;
+  onFollowerCountChange?: (count: number) => void;
 }
 
 export function ProfileHeader({
@@ -27,10 +31,14 @@ export function ProfileHeader({
   isFollowing = false,
   followerCount,
   followingCount,
-  onToggleFollow,
+  onFollowChange,
+  onFollowerCountChange,
 }: ProfileHeaderProps) {
   const router = useRouter();
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isMessaging, setIsMessaging] = useState(false);
+  const { getOrCreateChat } = useMessages();
+  const { showNotification } = useNotification();
 
   const handleImageUploaded = async (url: string) => {
     try {
@@ -47,13 +55,55 @@ export function ProfileHeader({
       setIsUploadingImage(false);
       
       // Show success message
-      alert('Profile picture updated successfully!');
+      showNotification({
+        type: 'success',
+        title: 'Profile Updated',
+        description: 'Profile picture updated successfully!'
+      });
       
-      // Reload page to show new image - this should use Next.js router instead
+      // Reload page to show new image
       router.refresh();
     } catch (error) {
       console.error('Error updating profile picture:', error);
-      alert('Failed to update profile. Please try again.');
+      showNotification({
+        type: 'error',
+        title: 'Update Failed',
+        description: 'Failed to update profile. Please try again.'
+      });
+    }
+  };
+
+  const handleFollowerCountChange = (newCount: number) => {
+    console.log(`Follower count updated: ${newCount}`);
+    if (onFollowerCountChange) {
+      onFollowerCountChange(newCount);
+    }
+  };
+
+  const handleMessage = async () => {
+    if (!auth.currentUser) {
+      showNotification({
+        type: 'info',
+        title: 'Sign in required',
+        description: 'Please sign in to message users',
+      });
+      return;
+    }
+
+    setIsMessaging(true);
+
+    try {
+      const chat = await getOrCreateChat(profile.uid);
+      router.push(`/messages/${chat.id}`);
+    } catch (error) {
+      console.error('Error creating chat:', error);
+      showNotification({
+        type: 'error',
+        title: 'Message Failed',
+        description: 'Unable to create conversation. Please try again.',
+      });
+    } finally {
+      setIsMessaging(false);
     }
   };
 
@@ -136,12 +186,34 @@ export function ProfileHeader({
                   Edit Profile
                 </Button>
               ) : (
-                <Button 
-                  variant={isFollowing ? "outline" : "primary"}
-                  onClick={onToggleFollow}
-                >
-                  {isFollowing ? 'Following' : 'Follow'}
-                </Button>
+                <>
+                  <FollowButton 
+                    userId={profile.uid}
+                    isFollowing={isFollowing}
+                    onFollowChange={onFollowChange}
+                    onCountChange={handleFollowerCountChange}
+                  />
+                  <Button 
+                    variant="outline"
+                    onClick={handleMessage}
+                    isLoading={isMessaging}
+                    disabled={isMessaging}
+                  >
+                    <svg
+                      className="w-4 h-4 mr-2"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    Message
+                  </Button>
+                </>
               )}
             </div>
           </div>

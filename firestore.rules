@@ -36,7 +36,11 @@ service cloud.firestore {
                     request.resource.data.uid == userId;
       
       // Allow updates if they own the document
-      allow update: if isOwner(userId);
+      // OR if only updating allowed fields (unreadNotifications, followerCount, followingCount, or notificationPreferences)
+      allow update: if isSignedIn() && (
+        isOwner(userId) || 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadNotifications', 'notificationPreferences', 'followerCount', 'followingCount'])
+      );
       
       // Only allow admins to delete user documents
       allow delete: if isAdmin();
@@ -56,12 +60,94 @@ service cloud.firestore {
       // User's connections (followers/following)
       match /connections/{connectionId} {
         allow read: if isSignedIn();
+        // Allow write if it's your own connection or if you're creating a follow relationship with this user
+        allow write: if isSignedIn() && (
+          isOwner(userId) || 
+          (request.auth.uid == connectionId && 
+           (request.resource.data.type == 'follower' || request.resource.data.type == 'following'))
+        );
+      }
+      
+      // User's tee times
+      match /teeTimes/{teeTimeId} {
+        allow read, write: if isOwner(userId);
+      }
+      
+      // User's saved marketplace listings
+      match /savedListings/{listingId} {
+        allow read: if isOwner(userId);
         allow write: if isOwner(userId);
       }
       
-      // User's tee times (updated path to match code)
-      match /teeTimes/{teeTimeId} {
-        allow read, write: if isOwner(userId);
+      // User's tournaments
+      match /tournaments/{tournamentId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId);
+      }
+    }
+    
+    // Notifications
+    match /notifications/{notificationId} {
+      // Allow read if the notification belongs to the authenticated user
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Allow create by any authenticated user (for system-generated notifications)
+      allow create: if isSignedIn() && (
+        // Regular user-generated notification
+        (request.resource.data.actorId == request.auth.uid) ||
+        // System notification (actorId = 'system')
+        (request.resource.data.actorId == 'system' && 
+         (request.resource.data.type == 'handicap-updated' || 
+          request.resource.data.type == 'tournament-update' || 
+          request.resource.data.type == 'friend-activity' || 
+          request.resource.data.type == 'course-review'))
+      );
+      
+      // Allow update if the notification belongs to the authenticated user
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Allow delete if the notification belongs to the authenticated user
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Tournaments
+    match /tournaments/{tournamentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.creatorId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.creatorId == request.auth.uid || 
+        resource.data.admins[request.auth.uid] == true
+      );
+      allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
+      
+      // Tournament participants
+      match /participants/{userId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && (
+          userId == request.auth.uid || 
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.creatorId == request.auth.uid ||
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.admins[request.auth.uid] == true
+        );
+        allow delete: if isSignedIn() && (
+          userId == request.auth.uid || 
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.creatorId == request.auth.uid ||
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.admins[request.auth.uid] == true
+        );
+      }
+      
+      // Tournament rounds/scores
+      match /rounds/{roundId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && (
+          request.resource.data.userId == request.auth.uid || 
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.creatorId == request.auth.uid ||
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.admins[request.auth.uid] == true
+        );
+        allow delete: if isSignedIn() && (
+          resource.data.userId == request.auth.uid || 
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.creatorId == request.auth.uid ||
+          get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.admins[request.auth.uid] == true
+        );
       }
     }
     
@@ -69,7 +155,6 @@ service cloud.firestore {
     match /posts/{postId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
-      // Allow updating like and comment counts by any signed-in user
       allow update: if isSignedIn() && (
         // Full update by owner
         (resource.data.authorId == request.auth.uid) || 
@@ -150,7 +235,7 @@ service cloud.firestore {
       }
     }
     
-    // Tee Times - UPDATED to match code path (camelCase)
+    // Tee Times
     match /teeTimes/{teeTimeId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.creatorId == request.auth.uid;
@@ -162,7 +247,7 @@ service cloud.firestore {
       );
       allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
       
-      // Players subcollection - UPDATED to use userId as document ID
+      // Players subcollection
       match /players/{playerId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && (
@@ -180,25 +265,7 @@ service cloud.firestore {
       }
     }
     
-    // Keep the old path temporarily for backward compatibility
-    match /tee-times/{teeTimeId} {
-      allow read: if isSignedIn();
-      allow write: if false; // Disable writes to the old path
-    }
-    
-    // Tee Time Players - keeping this rule for backward compatibility
-    match /tee-time-players/{teeTimePlayerId} {
-      allow read: if isSignedIn();
-      allow write: if false; // Disable writes to the old collection
-    }
-    
-    // User Tee Times (for quick lookups) - keeping this rule for backward compatibility
-    match /user-tee-times/{userId}/{teeTimeId} {
-      allow read: if isOwner(userId);
-      allow write: if false; // Disable writes to the old collection
-    }
-    
-    // Tee Time Invitations - UPDATED to use invitedUserId instead of email
+    // Tee Time Invitations
     match /tee-time-invitations/{invitationId} {
       // Allow read by the inviter or invited user
       allow read: if isSignedIn() && (
@@ -206,7 +273,6 @@ service cloud.firestore {
         resource.data.invitedUserId == request.auth.uid
       );
       
-      // Update path reference to match code
       allow create: if isSignedIn() && 
         get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid;
       
@@ -220,14 +286,32 @@ service cloud.firestore {
     
     // Marketplace listings
     match /marketplace/{listingId} {
+      // Allow reading for any signed-in user
       allow read: if isSignedIn();
+      
+      // Allow creation if the user is the seller
       allow create: if isSignedIn() && request.resource.data.sellerId == request.auth.uid;
-      allow update, delete: if isSignedIn() && resource.data.sellerId == request.auth.uid;
+      
+      // Allow updates by seller OR for incrementing view count
+      allow update: if isSignedIn() && (
+        // Owner can update everything
+        resource.data.sellerId == request.auth.uid ||
+        
+        // Any signed-in user can update view count and savedBy array
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'saves', 'savedBy']) ||
+        
+        // Only changing the status to 'sold'
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+         request.resource.data.status == 'sold')
+      );
+      
+      // Only seller can delete their listing
+      allow delete: if isSignedIn() && resource.data.sellerId == request.auth.uid;
     }
     
-    // Messages - UPDATED for the new participantArray field
+    // Messages
     match /messages/{chatId} {
-      // Base chat rules - UPDATED
+      // Base chat rules
       allow create: if isSignedIn() && 
                      request.resource.data.participants[request.auth.uid] == true &&
                      request.resource.data.participantArray is list &&
@@ -238,7 +322,7 @@ service cloud.firestore {
                    (resource.data.participants[request.auth.uid] == true ||
                     resource.data.participantArray.hasAny([request.auth.uid]));
       
-      // Allow updates to specific fields - UPDATED
+      // Allow updates to specific fields
       allow update: if isSignedIn() && 
                      (resource.data.participants[request.auth.uid] == true ||
                       resource.data.participantArray.hasAny([request.auth.uid])) &&
@@ -248,18 +332,18 @@ service cloud.firestore {
       
       // Individual messages in thread
       match /thread/{messageId} {
-        // Allow read by any chat participant - UPDATED
+        // Allow read by any chat participant
         allow read: if isSignedIn() && 
                      (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
                       get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid]));
         
-        // Allow create if user is a participant and they are the sender - UPDATED
+        // Allow create if user is a participant and they are the sender
         allow create: if isSignedIn() && 
                        (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
                         get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid])) &&
                        request.resource.data.senderId == request.auth.uid;
         
-        // Allow updates only for readBy field or soft delete - UPDATED
+        // Allow updates only for readBy field or soft delete
         allow update: if isSignedIn() && 
                        (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
                         get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid])) &&
@@ -277,13 +361,6 @@ service cloud.firestore {
         // Hard delete limited to sender only
         allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
       }
-    }
-    
-    // Message Attachments (for future enhancement)
-    match /message-attachments/{attachmentId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.uploadedBy == request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.uploadedBy == request.auth.uid;
     }
     
     // System collections (admin only)

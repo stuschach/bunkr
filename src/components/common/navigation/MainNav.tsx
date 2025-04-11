@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils/cn';
 import { Avatar } from '@/components/ui/Avatar';
 import { Dropdown, DropdownItem } from '@/components/ui/Dropdown';
 import { Toggle } from '@/components/ui/Toggle';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 interface NavItem {
   label: string;
@@ -80,6 +81,15 @@ export function MainNav() {
             />
           </div>
 
+          {/* Notifications bell */}
+          {user && (
+            <NotificationBell 
+              className={cn(
+                pathname === '/notifications' && 'text-green-500'
+              )}
+            />
+          )}
+
           {/* Messages icon */}
           {user && (
             <Link
@@ -138,6 +148,9 @@ export function MainNav() {
               </DropdownItem>
               <DropdownItem onClick={() => router.push('/tee-times/my')}>
                 My Tee Times
+              </DropdownItem>
+              <DropdownItem onClick={() => router.push('/notifications')}>
+                Notifications
               </DropdownItem>
               <DropdownItem onClick={() => router.push('/messages')}>
                 Messages
