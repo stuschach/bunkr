@@ -8,6 +8,7 @@ import {
   TeeTimeFilters
 } from '@/types/tee-times';
 import { UserProfile } from '@/types/auth';
+import { usePostCreation } from '@/lib/hooks/usePostCreation';
 import { 
   createTeeTime,
   getTeeTimeById,
@@ -22,11 +23,12 @@ import {
   invitePlayerToTeeTime,
   searchUsersByName
 } from '@/lib/services/tee-times-service';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 
 export function useTeeTime() {
   const { user } = useAuth();
+  const { createPost, isCreating: isCreatingPost } = usePostCreation();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,7 +82,7 @@ export function useTeeTime() {
     }
   }, [getUserProfile]);
 
-  // Create a new tee time
+  // Create a new tee time - UPDATED to use usePostCreation hook
   const handleCreateTeeTime = useCallback(async (teeTimeData: TeeTimeFormData): Promise<string | null> => {
     if (!user) {
       setError('You must be logged in to create a tee time');
@@ -93,10 +95,34 @@ export function useTeeTime() {
     try {
       console.log("Creating tee time with data:", teeTimeData);
       
-      // Use the service function which already creates a post
-      // The service already handles creating the post in the posts collection
+      // First create the tee time entity
       const teeTimeId = await createTeeTime(user.uid, teeTimeData);
-      console.log("Tee time created with ID:", teeTimeId);
+      
+      if (!teeTimeId) {
+        throw new Error('Failed to create tee time');
+      }
+      
+      // Format date and time for post content
+      const dateTime = new Date(teeTimeData.date);
+      const [hours, minutes] = teeTimeData.time.split(':').map(Number);
+      dateTime.setHours(hours, minutes);
+      
+      // Create the post using our unified post creation hook
+      const postContent = `I'm hosting a tee time at ${teeTimeData.courseName} on ${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. Looking for ${teeTimeData.maxPlayers - 1} more players!`;
+      
+      // Create the post with the correct metadata from the start
+      // FIXED: Convert JavaScript Date to Firestore Timestamp
+      await createPost({
+        content: postContent,
+        teeTimeId: teeTimeId,
+        courseName: teeTimeData.courseName,
+        courseId: teeTimeData.courseId || null,
+        dateTime: Timestamp.fromDate(dateTime),  // Convert Date to Timestamp
+        maxPlayers: teeTimeData.maxPlayers,
+        visibility: teeTimeData.visibility === 'private' ? 'private' : 'public',
+      }, 'tee-time'); // Use tee-time type from the start
+      
+      console.log("Tee time and post created with ID:", teeTimeId);
       
       return teeTimeId;
     } catch (error) {
@@ -106,7 +132,7 @@ export function useTeeTime() {
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, createPost]);
 
   // Get a tee time with players and profiles
   const getTeeTimeDetails = useCallback(async (
@@ -341,7 +367,7 @@ export function useTeeTime() {
   }, []);
 
   return {
-    isLoading,
+    isLoading: isLoading || isCreatingPost,
     error,
     resetError,
     getUserProfile,

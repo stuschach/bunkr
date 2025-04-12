@@ -1,3 +1,6 @@
+// src/components/stats/StatsOverview.tsx
+'use client';
+
 import React, { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -47,11 +50,12 @@ export function StatsOverview({ rounds, userHandicapIndex }: StatsOverviewProps)
     })[0];
     
     // Calculate stats
-    const totalRounds = rounds.length;
+    // NEW: Filter rounds by state='completed' to count only completed rounds
+    const totalRounds = rounds.filter(round => round.state === 'completed').length;
     const roundsThisYear = rounds.filter(round => {
       const roundDate = new Date(round.date);
       const currentYear = new Date().getFullYear();
-      return roundDate.getFullYear() === currentYear;
+      return roundDate.getFullYear() === currentYear && round.state === 'completed';
     }).length;
     
     // Use the handicap index from the user profile instead of calculating from rounds

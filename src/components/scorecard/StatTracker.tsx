@@ -33,17 +33,39 @@ export function StatTracker({
   readonly = false
 }: StatTrackerProps) {
   // Calculate percentages and averages
-  const fairwayPercentage = stats.fairwaysTotal > 0 
-    ? Math.round((stats.fairwaysHit / stats.fairwaysTotal) * 100) 
-    : 0;
-    
+  const fairwayPercentage = calculateFairwayPercentage(stats.fairwaysHit, stats.fairwaysTotal);
+  
   const girPercentage = Math.round((stats.greensInRegulation / 18) * 100);
+  
   const puttsPerHole = holes.filter(h => h.score > 0).length > 0
     ? (stats.totalPutts / holes.filter(h => h.score > 0).length).toFixed(1)
     : '0.0';
   
   // Count total holes played
   const holesPlayed = holes.filter(h => h.score > 0).length;
+
+  // Function to calculate fairway percentage properly
+  function calculateFairwayPercentage(fairwaysHit: number, fairwaysTotal: number): number {
+    // Only calculate percentage if there are non-par-3 holes
+    if (fairwaysTotal > 0) {
+      return Math.round((fairwaysHit / fairwaysTotal) * 100);
+    }
+    // Return 0 if there are no non-par-3 holes
+    return 0;
+  }
+  
+  // Function to render fairway data in the table
+  function fairwayCell(hole: HoleData) {
+    if (hole.par <= 3) {
+      return <span className="text-gray-400">N/A</span>;
+    } else if (hole.fairwayHit === true) {
+      return <span className="text-green-500">✓</span>;
+    } else if (hole.fairwayHit === false) {
+      return <span className="text-red-500">✗</span>;
+    } else {
+      return <span className="text-gray-400">-</span>;
+    }
+  }
   
   return (
     <div className="space-y-6">
@@ -170,15 +192,7 @@ export function StatTracker({
                         )}
                       </td>
                       <td className="px-3 py-2 text-center whitespace-nowrap">
-                        {hole.par <= 3 ? (
-                          <span className="text-gray-400">-</span>
-                        ) : hole.fairwayHit === true ? (
-                          <span className="text-green-500">✓</span>
-                        ) : hole.fairwayHit === false ? (
-                          <span className="text-red-500">✗</span>
-                        ) : (
-                          <span className="text-gray-400">-</span>
-                        )}
+                        {fairwayCell(hole)}
                       </td>
                       <td className="px-3 py-2 text-center whitespace-nowrap">
                         {hole.greenInRegulation ? (

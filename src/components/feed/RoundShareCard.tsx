@@ -1,14 +1,14 @@
 // src/components/feed/RoundShareCard.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Avatar } from '@/components/ui/Avatar';
 import { formatScoreWithRelationToPar } from '@/lib/utils/formatting';
-import { Scorecard } from '@/types/scorecard';
+import { Scorecard, HoleData } from '@/types/scorecard';
 import { UserProfile } from '@/types/auth';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
@@ -22,16 +22,16 @@ import {
   query,
   orderBy,
   getDocs,
-  getDoc,
-  Timestamp
+  getDoc
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
-import { Comment } from '@/types/post';
+import { Comment, Post } from '@/types/post';
 import { PostActions } from '@/components/common/social/PostActions';
 import { CommentSection } from '@/components/common/social/CommentSection';
+import { fetchFullRoundData } from '@/lib/firebase/feed-service';
 
 interface RoundShareCardProps {
-  round: Scorecard;
+  round: Scorecard | Post;
   user: UserProfile;
   postId?: string;
   showActions?: boolean;
@@ -41,9 +41,9 @@ interface RoundShareCardProps {
   likedByUser?: boolean;
   likes?: number;
   comments?: number;
-  fullRoundData?: { holes: any[] } | null;
-  fetchFullRoundData?: () => Promise<void>;
-  loadingFullData?: boolean;
+  // New props for virtualization support
+  isExpanded?: boolean;
+  onToggleExpand?: (isExpanded: boolean) => void;
 }
 
 export function RoundShareCard({ 
@@ -57,9 +57,9 @@ export function RoundShareCard({
   likedByUser = false,
   likes = 0,
   comments = 0,
-  fullRoundData = null,
-  fetchFullRoundData,
-  loadingFullData = false
+  // Handle the new props with defaults
+  isExpanded: externalExpanded,
+  onToggleExpand
 }: RoundShareCardProps) {
   const { user: currentUser } = useAuth();
   const [showCommentInput, setShowCommentInput] = useState(false);
@@ -68,49 +68,75 @@ export function RoundShareCard({
   const [postComments, setPostComments] = useState<Comment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [showComments, setShowComments] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
   
-  // Calculate stats percentages for visualizations
-  const fairwayPercentage = round.stats && round.stats.fairwaysTotal > 0 
-    ? (round.stats.fairwaysHit / round.stats.fairwaysTotal) * 100 
-    : 0;
+  // Use local state, but respect external control if provided
+  const [localExpanded, setLocalExpanded] = useState(false);
+  
+  // Determine if expanded based on props or local state
+  const isExpanded = externalExpanded !== undefined ? externalExpanded : localExpanded;
+  
+  // Add state for full round data
+  const [fullRoundData, setFullRoundData] = useState<Scorecard | null>(null);
+  const [loadingFullData, setLoadingFullData] = useState(false);
+  
+  // Detect if this is a Post object or a Scorecard object
+  const isPostType = 'postType' in round;
+  
+  // Extract the round ID for fetching complete data
+  const roundId = isPostType ? (round as Post).roundId : (round as Scorecard).id;
+  
+  // Safely extract data with fallbacks regardless of source
+  const roundStats = round.stats || {};
+  const courseName = 'courseName' in round ? round.courseName : 
+                    (round.location?.name || 'Unknown Course');
+  const coursePar = 'coursePar' in round ? round.coursePar : 72;
+  
+  // Only use holes from fullRoundData if available, otherwise use holes from round if they exist
+  const holes: HoleData[] = fullRoundData ? fullRoundData.holes : 
+                            ('holes' in round && Array.isArray(round.holes)) ? round.holes : [];
+  
+  const teeBox = 'teeBox' in round ? round.teeBox : { name: 'Default', yardage: 0 };
+  const roundDate = 'date' in round ? round.date : new Date();
+  
+  // Calculate front 9, back 9, and total scores from available holes
+  const frontNine = holes.filter(hole => hole && hole.number <= 9);
+  const backNine = holes.filter(hole => hole && hole.number > 9);
+  
+  const frontNinePar = frontNine.reduce((sum, hole) => sum + (hole?.par || 0), 0);
+  const frontNineScore = frontNine.reduce((sum, hole) => sum + (hole?.score || 0), 0);
+  const backNinePar = backNine.reduce((sum, hole) => sum + (hole?.par || 0), 0);
+  const backNineScore = backNine.reduce((sum, hole) => sum + (hole?.score || 0), 0);
+  
+  // Safely calculate total score
+  const totalScore = 'totalScore' in round ? round.totalScore : 
+                     (frontNineScore + backNineScore) || 0;
+  
+  // Calculate stats percentages for visualizations with safety checks
+  const fairwayPercentage = roundStats.fairwaysTotal ? 
+    (roundStats.fairwaysHit / roundStats.fairwaysTotal) * 100 : 0;
     
-  const girPercentage = round.stats ? (round.stats.greensInRegulation / 18) * 100 : 0;
-  const averagePutts = round.stats ? round.stats.totalPutts / 18 : 0;
+  const girPercentage = roundStats.greensInRegulation ? 
+    (roundStats.greensInRegulation / 18) * 100 : 0;
+    
+  const averagePutts = roundStats.totalPutts ? 
+    roundStats.totalPutts / 18 : 0;
   
-  // Get score colors based on relation to par
-  const getScoreColor = (score: number, par: number) => {
-    const diff = score - par;
-    if (diff < 0) return 'text-green-500'; // Under par
-    if (diff === 0) return 'text-gray-700 dark:text-gray-300'; // Par
-    return 'text-red-500'; // Over par
-  };
-  
-  // Get date in formatted string
-  const playedDate = new Date(round.date).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
-
-  // Toggle expanded view
-  const toggleExpand = () => {
-    if (!isExpanded && fetchFullRoundData && !fullRoundData) {
-      fetchFullRoundData();
+  // Function to fetch full round data when expanded
+  const fetchCompleteRoundData = useCallback(async () => {
+    if (!roundId || fullRoundData) return;
+    
+    setLoadingFullData(true);
+    try {
+      const data = await fetchFullRoundData(roundId);
+      if (data) {
+        setFullRoundData(data);
+      }
+    } catch (error) {
+      console.error('Error fetching complete round data:', error);
+    } finally {
+      setLoadingFullData(false);
     }
-    setIsExpanded(!isExpanded);
-  };
-
-  // Get holes data from either full data or basic data
-  const holes = fullRoundData?.holes || round.holes || [];
-  const frontNine = holes.filter(hole => hole.number <= 9);
-  const backNine = holes.filter(hole => hole.number > 9);
-
-  // Calculate front nine and back nine totals
-  const frontNinePar = frontNine.reduce((sum, hole) => sum + hole.par, 0);
-  const frontNineScore = frontNine.reduce((sum, hole) => sum + hole.score, 0);
-  const backNinePar = backNine.reduce((sum, hole) => sum + hole.par, 0);
-  const backNineScore = backNine.reduce((sum, hole) => sum + hole.score, 0);
+  }, [roundId, fullRoundData]);
   
   // Fetch comments when showComments is toggled on
   useEffect(() => {
@@ -234,15 +260,55 @@ export function RoundShareCard({
     }
   };
 
+  // Get score colors based on relation to par
+  const getScoreColor = (score: number, par: number) => {
+    const diff = score - par;
+    if (diff < 0) return 'text-green-500'; // Under par
+    if (diff === 0) return 'text-gray-700 dark:text-gray-300'; // Par
+    return 'text-red-500'; // Over par
+  };
+  
+  // Get date in formatted string
+  const playedDate = roundDate ? 
+    (typeof roundDate === 'string' ? new Date(roundDate) : 
+    roundDate instanceof Date ? roundDate : new Date()).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    }) : 'Unknown date';
+
+  // Toggle expanded view - updated to support virtualization
+  const toggleExpand = () => {
+    if (!isExpanded && !fullRoundData) {
+      fetchCompleteRoundData();
+    }
+    
+    // Update local state
+    const newExpandedState = !isExpanded;
+    setLocalExpanded(newExpandedState);
+    
+    // Notify parent component if callback provided
+    if (onToggleExpand) {
+      onToggleExpand(newExpandedState);
+    }
+  };
+
   // Extract scorecard highlights (best holes, worst holes)
   const getScoreHighlights = () => {
-    if (!holes || holes.length === 0) return null;
+    const availableHoles = fullRoundData?.holes || 
+      (('holes' in round && Array.isArray(round.holes)) ? round.holes : []);
+      
+    if (!availableHoles || availableHoles.length === 0) return null;
     
-    const sortedHoles = [...holes].sort((a, b) => {
-      const aRelation = a.score - a.par;
-      const bRelation = b.score - b.par;
-      return aRelation - bRelation;
-    });
+    const sortedHoles = [...availableHoles]
+      .filter(h => h && h.score && h.par)
+      .sort((a, b) => {
+        const aRelation = a.score - a.par;
+        const bRelation = b.score - b.par;
+        return aRelation - bRelation;
+      });
+    
+    if (sortedHoles.length === 0) return null;
     
     const bestHole = sortedHoles[0];
     const worstHole = sortedHoles[sortedHoles.length - 1];
@@ -271,9 +337,9 @@ export function RoundShareCard({
 
       {/* Mini scorecard summary */}
       <div className="flex justify-between mt-2 text-xs text-gray-500">
-        <div>Front: {frontNineScore} ({formatScoreWithRelationToPar(frontNineScore, frontNinePar)})</div>
+        <div>Front: {frontNineScore || 0} ({formatScoreWithRelationToPar(frontNineScore || 0, frontNinePar || 36)})</div>
         {backNine.length > 0 && (
-          <div>Back: {backNineScore} ({formatScoreWithRelationToPar(backNineScore, backNinePar)})</div>
+          <div>Back: {backNineScore || 0} ({formatScoreWithRelationToPar(backNineScore || 0, backNinePar || 36)})</div>
         )}
       </div>
     </div>
@@ -298,23 +364,23 @@ export function RoundShareCard({
               </Link>
               <span className="text-gray-500 text-xs mx-2">posted a round</span>
             </div>
-            <CardTitle className="text-lg">{round.courseName}</CardTitle>
+            <CardTitle className="text-lg">{courseName || 'Unnamed Course'}</CardTitle>
             <div className="text-sm text-gray-500 dark:text-gray-400">{playedDate}</div>
           </div>
           <div className="text-right">
-            <div className={`text-2xl font-bold ${getScoreColor(round.totalScore, round.coursePar)}`}>
-              {formatScoreWithRelationToPar(round.totalScore, round.coursePar)}
+            <div className={`text-2xl font-bold ${getScoreColor(totalScore, coursePar)}`}>
+              {formatScoreWithRelationToPar(totalScore, coursePar)}
             </div>
             <div className="text-sm text-gray-500 dark:text-gray-400">
-              {round.teeBox?.name || 'Default'} • {round.teeBox?.yardage || 'N/A'} yards
+              {teeBox?.name || 'Default'} • {teeBox?.yardage ? `${teeBox.yardage} yards` : 'N/A'}
             </div>
           </div>
         </div>
         
         {/* Score Highlights */}
-        {scoreHighlights && (
+        {scoreHighlights && scoreHighlights.bestHole && (
           <div className="mt-2 flex flex-wrap gap-2">
-            {scoreHighlights.bestHole && scoreHighlights.bestHole.score < scoreHighlights.bestHole.par && (
+            {scoreHighlights.bestHole.score < scoreHighlights.bestHole.par && (
               <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                 {scoreHighlights.bestHole.score === scoreHighlights.bestHole.par - 1 ? 'Birdie' : 
                  scoreHighlights.bestHole.score === scoreHighlights.bestHole.par - 2 ? 'Eagle' : 'Double Eagle'} on Hole {scoreHighlights.bestHole.number}
@@ -326,12 +392,12 @@ export function RoundShareCard({
       
       <CardContent>
         {/* Stats Overview - Always shown */}
-        {round.stats && (
+        {roundStats && (
           <div className="grid grid-cols-3 gap-4 mb-4">
             <div className="text-center">
               <div className="text-sm text-gray-500 dark:text-gray-400">Fairways</div>
               <div className="text-lg font-medium">
-                {round.stats.fairwaysHit}/{round.stats.fairwaysTotal}
+                {roundStats.fairwaysHit || 0}/{roundStats.fairwaysTotal || 0}
               </div>
               <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full mt-1">
                 <div 
@@ -344,7 +410,7 @@ export function RoundShareCard({
             <div className="text-center">
               <div className="text-sm text-gray-500 dark:text-gray-400">GIR</div>
               <div className="text-lg font-medium">
-                {round.stats.greensInRegulation}/18
+                {roundStats.greensInRegulation || 0}/18
               </div>
               <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full mt-1">
                 <div 
@@ -357,51 +423,48 @@ export function RoundShareCard({
             <div className="text-center">
               <div className="text-sm text-gray-500 dark:text-gray-400">Putts</div>
               <div className="text-lg font-medium">
-                {round.stats.totalPutts} ({averagePutts.toFixed(1)}/hole)
+                {roundStats.totalPutts || 0} ({averagePutts.toFixed(1)}/hole)
               </div>
             </div>
           </div>
         )}
         
         {/* Score Distribution - Always shown */}
-        {round.stats && (
-          (round.stats.eagles > 0 || round.stats.birdies > 0 || round.stats.pars > 0 || 
-          round.stats.bogeys > 0 || round.stats.doubleBogeys > 0 || round.stats.worseThanDouble > 0) && (
-            <div className="mt-4">
-              <div className="flex flex-wrap gap-2 mt-2">
-                {round.stats.eagles > 0 && (
-                  <Badge variant="success" className="bg-green-600">
-                    {round.stats.eagles} Eagle{round.stats.eagles > 1 ? 's' : ''}
-                  </Badge>
-                )}
-                {round.stats.birdies > 0 && (
-                  <Badge variant="success">
-                    {round.stats.birdies} Birdie{round.stats.birdies > 1 ? 's' : ''}
-                  </Badge>
-                )}
-                {round.stats.pars > 0 && (
-                  <Badge variant="secondary">
-                    {round.stats.pars} Par{round.stats.pars > 1 ? 's' : ''}
-                  </Badge>
-                )}
-                {round.stats.bogeys > 0 && (
-                  <Badge variant="outline" className="text-red-500 border-red-500">
-                    {round.stats.bogeys} Bogey{round.stats.bogeys > 1 ? 's' : ''}
-                  </Badge>
-                )}
-                {round.stats.doubleBogeys > 0 && (
-                  <Badge variant="error">
-                    {round.stats.doubleBogeys} Double{round.stats.doubleBogeys > 1 ? 's' : ''}
-                  </Badge>
-                )}
-                {round.stats.worseThanDouble > 0 && (
-                  <Badge variant="error" className="bg-red-700">
-                    {round.stats.worseThanDouble} Other
-                  </Badge>
-                )}
-              </div>
+        {roundStats && (
+          <div className="mt-4">
+            <div className="flex flex-wrap gap-2 mt-2">
+              {roundStats.eagles && roundStats.eagles > 0 && (
+                <Badge variant="success" className="bg-green-600">
+                  {roundStats.eagles} Eagle{roundStats.eagles > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {roundStats.birdies && roundStats.birdies > 0 && (
+                <Badge variant="success">
+                  {roundStats.birdies} Birdie{roundStats.birdies > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {roundStats.pars && roundStats.pars > 0 && (
+                <Badge variant="secondary">
+                  {roundStats.pars} Par{roundStats.pars > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {roundStats.bogeys && roundStats.bogeys > 0 && (
+                <Badge variant="outline" className="text-red-500 border-red-500">
+                  {roundStats.bogeys} Bogey{roundStats.bogeys > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {roundStats.doubleBogeys && roundStats.doubleBogeys > 0 && (
+                <Badge variant="error">
+                  {roundStats.doubleBogeys} Double{roundStats.doubleBogeys > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {roundStats.worseThanDouble && roundStats.worseThanDouble > 0 && (
+                <Badge variant="error" className="bg-red-700">
+                  {roundStats.worseThanDouble} Other
+                </Badge>
+              )}
             </div>
-          )
+          </div>
         )}
         
         {/* Collapsible section */}
@@ -437,21 +500,21 @@ export function RoundShareCard({
                           <tr className="bg-white dark:bg-gray-900">
                             <td className="px-3 py-2 font-medium">Par</td>
                             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(holeNum => {
-                              const hole = frontNine.find(h => h.number === holeNum);
+                              const hole = frontNine.find(h => h && h.number === holeNum);
                               return (
                                 <td key={`par-${holeNum}`} className="px-3 py-2 text-center">
-                                  {hole ? hole.par : '-'}
+                                  {hole?.par || '-'}
                                 </td>
                               );
                             })}
                             <td className="px-3 py-2 text-center font-medium">
-                              {frontNinePar}
+                              {frontNinePar || '-'}
                             </td>
                           </tr>
                           <tr className="bg-gray-50 dark:bg-gray-800">
                             <td className="px-3 py-2 font-medium">Score</td>
                             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(holeNum => {
-                              const hole = frontNine.find(h => h.number === holeNum);
+                              const hole = frontNine.find(h => h && h.number === holeNum);
                               if (!hole) return (
                                 <td key={`score-${holeNum}`} className="px-3 py-2 text-center">-</td>
                               );
@@ -459,14 +522,14 @@ export function RoundShareCard({
                               return (
                                 <td 
                                   key={`score-${holeNum}`} 
-                                  className={`px-3 py-2 text-center ${getScoreColor(hole.score, hole.par)}`}
+                                  className={`px-3 py-2 text-center ${hole.score && hole.par ? getScoreColor(hole.score, hole.par) : ''}`}
                                 >
-                                  {hole.score}
+                                  {hole.score || '-'}
                                 </td>
                               );
                             })}
                             <td className="px-3 py-2 text-center font-medium">
-                              {frontNineScore}
+                              {frontNineScore || '-'}
                             </td>
                           </tr>
                         </tbody>
@@ -496,20 +559,22 @@ export function RoundShareCard({
                           <tr className="bg-white dark:bg-gray-900">
                             <td className="px-3 py-2 font-medium">Par</td>
                             {[10, 11, 12, 13, 14, 15, 16, 17, 18].map(holeNum => {
-                              const hole = backNine.find(h => h.number === holeNum);
+                              const hole = backNine.find(h => h && h.number === holeNum);
                               return (
                                 <td key={`par-${holeNum}`} className="px-3 py-2 text-center">
-                                  {hole ? hole.par : '-'}
+                                  {hole?.par || '-'}
                                 </td>
                               );
                             })}
-                            <td className="px-3 py-2 text-center font-medium">{backNinePar}</td>
-                            <td className="px-3 py-2 text-center font-medium">{frontNinePar + backNinePar}</td>
+                            <td className="px-3 py-2 text-center font-medium">{backNinePar || '-'}</td>
+                            <td className="px-3 py-2 text-center font-medium">
+                              {(frontNinePar || 0) + (backNinePar || 0) || '-'}
+                            </td>
                           </tr>
                           <tr className="bg-gray-50 dark:bg-gray-800">
                             <td className="px-3 py-2 font-medium">Score</td>
                             {[10, 11, 12, 13, 14, 15, 16, 17, 18].map(holeNum => {
-                              const hole = backNine.find(h => h.number === holeNum);
+                              const hole = backNine.find(h => h && h.number === holeNum);
                               if (!hole) return (
                                 <td key={`score-${holeNum}`} className="px-3 py-2 text-center">-</td>
                               );
@@ -517,14 +582,16 @@ export function RoundShareCard({
                               return (
                                 <td 
                                   key={`score-${holeNum}`} 
-                                  className={`px-3 py-2 text-center ${getScoreColor(hole.score, hole.par)}`}
+                                  className={`px-3 py-2 text-center ${hole.score && hole.par ? getScoreColor(hole.score, hole.par) : ''}`}
                                 >
-                                  {hole.score}
+                                  {hole.score || '-'}
                                 </td>
                               );
                             })}
-                            <td className="px-3 py-2 text-center font-medium">{backNineScore}</td>
-                            <td className="px-3 py-2 text-center font-medium">{frontNineScore + backNineScore}</td>
+                            <td className="px-3 py-2 text-center font-medium">{backNineScore || '-'}</td>
+                            <td className="px-3 py-2 text-center font-medium">
+                              {(frontNineScore || 0) + (backNineScore || 0) || '-'}
+                            </td>
                           </tr>
                         </tbody>
                       </table>

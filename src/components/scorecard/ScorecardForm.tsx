@@ -19,6 +19,9 @@ import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { HandicapService } from '@/lib/handicap/handicapService';
 import { calculateCourseHandicap } from '@/lib/handicap/calculator';
 import { Scorecard, HoleData, TeeBox } from '@/types/scorecard';
+import { fanoutPostToFeeds } from '@/lib/firebase/feed-service';
+import { DenormalizedAuthorData } from '@/types/post';
+import { debugLog } from '@/lib/utils/debug';
 
 interface ScorecardFormProps {
   scorecardId?: string; // If provided, we're editing an existing scorecard
@@ -55,7 +58,7 @@ export function ScorecardForm({
   const [currentTab, setCurrentTab] = useState<'details' | 'holes' | 'stats'>('details');
   const [isLoadingCourseData, setIsLoadingCourseData] = useState<boolean>(false);
   
-  // NEW: States for handicap
+  // States for handicap
   const [handicapIndex, setHandicapIndex] = useState<number | null>(null);
   const [courseHandicap, setCourseHandicap] = useState<number | null>(null);
   const [isLoadingHandicap, setIsLoadingHandicap] = useState<boolean>(false);
@@ -121,7 +124,7 @@ export function ScorecardForm({
     }
   }, [scorecardId, initialData]);
 
-  // NEW: Load user's handicap index
+  // Load user's handicap index
   useEffect(() => {
     const loadUserHandicapIndex = async () => {
       if (!user) return;
@@ -143,7 +146,7 @@ export function ScorecardForm({
             }
           }
         } else {
-          console.log("User document not found");
+          debugLog("User document not found");
         }
       } catch (error) {
         console.error("Error loading user handicap:", error);
@@ -155,7 +158,7 @@ export function ScorecardForm({
     loadUserHandicapIndex();
   }, [user]);
 
-  // NEW: Function to calculate course handicap
+  // Function to calculate course handicap
   const calculateAndSetCourseHandicap = (
     index: number | null, 
     selectedTeeBox: TeeBox, 
@@ -204,7 +207,7 @@ export function ScorecardForm({
     setIsLoadingCourseData(true);
     
     try {
-      console.log(`Loading hole data for course: ${courseId}`);
+      debugLog(`Loading hole data for course: ${courseId}`);
       
       // Check first if the course exists and is complete
       const courseRef = doc(db, 'courses', courseId);
@@ -221,13 +224,13 @@ export function ScorecardForm({
       }
       
       const courseData = courseDoc.data();
-      console.log('Course data:', courseData);
+      debugLog('Course data:', courseData);
       
       // Query for hole data
       const holesRef = collection(db, 'courses', courseId, 'holes');
       const holesSnapshot = await getDocs(holesRef);
       
-      console.log(`Found ${holesSnapshot.size} holes for course ${courseId}`);
+      debugLog(`Found ${holesSnapshot.size} holes for course ${courseId}`);
       
       // Initialize 18 holes with default values
       const holeData: HoleData[] = [];
@@ -251,7 +254,7 @@ export function ScorecardForm({
             const holeIndex = holeNumber - 1;
             const data = doc.data();
             
-            console.log(`Hole ${holeNumber} data:`, data);
+            debugLog(`Hole ${holeNumber} data:`, data);
             
             holeData[holeIndex] = {
               ...holeData[holeIndex],
@@ -260,10 +263,10 @@ export function ScorecardForm({
           }
         });
         
-        console.log('Processed hole data:', holeData);
+        debugLog('Processed hole data:', holeData);
         return holeData;
       } else {
-        console.log('No hole data found, using defaults');
+        debugLog('No hole data found, using defaults');
         
         // If the course is marked as complete but has no hole data, show a warning
         if (courseData.isComplete) {
@@ -277,7 +280,7 @@ export function ScorecardForm({
         // Set all pars to match the course total par if available
         if (courseData.par) {
           const totalPar = courseData.par;
-          console.log(`Setting default pars to match course total par: ${totalPar}`);
+          debugLog(`Setting default pars to match course total par: ${totalPar}`);
           
           // Create a standard layout:
           // - 4 par 3s (holes 2, 7, 11, 16)
@@ -302,7 +305,7 @@ export function ScorecardForm({
           const diff = totalPar - calculatedPar;
           
           if (diff !== 0) {
-            console.log(`Adjusting pars to match course total. Difference: ${diff}`);
+            debugLog(`Adjusting pars to match course total. Difference: ${diff}`);
             
             if (diff > 0) {
               // Need to increase some pars
@@ -343,7 +346,7 @@ export function ScorecardForm({
 
   // Enhanced handleCourseSelected function
   const handleCourseSelected = async (course: { id: string; name: string; par: number }) => {
-    console.log('Course selected:', course);
+    debugLog('Course selected:', course);
     setCourseId(course.id);
     setCourseName(course.name);
     setCoursePar(course.par);
@@ -351,11 +354,11 @@ export function ScorecardForm({
     // Load hole data from the course if available
     const holeData = await loadCourseHoleData(course.id);
     if (holeData) {
-      console.log('Setting holes from course data');
+      debugLog('Setting holes from course data');
       setHoles(holeData);
     } else {
       // Initialize with default pars
-      console.log('Initializing empty holes with par:', course.par);
+      debugLog('Initializing empty holes with par:', course.par);
       initializeEmptyHoles(course.par);
     }
 
@@ -412,7 +415,7 @@ export function ScorecardForm({
         // Fairway hit (excludes par 3s)
         if (hole.par > 3) {
           fairwaysTotal++;
-          if (hole.fairwayHit) fairwaysHit++;
+          if (hole.fairwayHit === true) fairwaysHit++;
         }
         
         // Green in regulation
@@ -445,7 +448,6 @@ export function ScorecardForm({
     };
   };
 
-  // Submit the scorecard - FIXED to accept MouseEvent
   const handleSubmit = async (e: React.FormEvent | React.MouseEvent) => {
     e.preventDefault();
     
@@ -493,7 +495,11 @@ export function ScorecardForm({
           doubleBogeys: stats.doubleBogeys,
           worseThanDouble: stats.worseThanDouble
         },
-        isPublic
+        isPublic,
+        isCompleted: true,
+        finalizedAt: serverTimestamp(),
+        // NEW: Add state field
+        state: 'completed'
       };
       
       // Only add notes if it's not an empty string
@@ -555,13 +561,40 @@ export function ScorecardForm({
       // Auto-post to feed
       try {
         // Format the scorecard data for posting to feed
+        const scoreToParText = stats.totalScore - coursePar === 0 
+          ? 'even par' 
+          : (stats.totalScore - coursePar > 0 ? '+' : '') + (stats.totalScore - coursePar);
+          
         const postData = {
           authorId: user.uid,
-          content: `Just finished a round at ${courseName} with a score of ${stats.totalScore} (${stats.totalScore - coursePar > 0 ? '+' : ''}${stats.totalScore - coursePar})!`,
+          content: `Just finished a round at ${courseName} with a score of ${stats.totalScore} (${scoreToParText})!`,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           postType: 'round',
           roundId: newScorecardId,
+          
+          // Include full scorecard data for display in the feed
+          courseName: courseName,
+          coursePar: coursePar,
+          totalScore: stats.totalScore,
+          scoreToPar: stats.totalScore - coursePar,
+          holes: holes,
+          teeBox: teeBox,
+          stats: {
+            totalPutts: stats.totalPutts,
+            fairwaysHit: stats.fairwaysHit,
+            fairwaysTotal: stats.fairwaysTotal,
+            greensInRegulation: stats.greensInRegulation,
+            penalties: stats.penalties,
+            eagles: stats.eagles,
+            birdies: stats.birdies,
+            pars: stats.pars,
+            bogeys: stats.bogeys,
+            doubleBogeys: stats.doubleBogeys,
+            worseThanDouble: stats.worseThanDouble
+          },
+          date: date,
+          
           location: {
             name: courseName,
             id: courseId
@@ -575,16 +608,27 @@ export function ScorecardForm({
         };
         
         // Add to the posts collection
-        await addDoc(collection(db, 'posts'), postData);
+        const postRef = await addDoc(collection(db, 'posts'), postData);
         
-        console.log('Round automatically posted to feed');
+        // Create denormalized author data for fanout
+        const authorData: DenormalizedAuthorData = {
+          uid: user.uid,
+          displayName: user.displayName || '',
+          photoURL: user.photoURL || '',
+          handicapIndex: user.handicapIndex !== undefined ? user.handicapIndex : null
+        };
+        
+        // Fan out the post to followers' feeds
+        await fanoutPostToFeeds(postRef.id, user.uid, authorData, 'round');
+        
+        debugLog('Round automatically posted to feed and fanned out to followers');
       } catch (postError) {
         console.error('Error posting round to feed:', postError);
         // Don't stop the process if feed posting fails
       }
       
       // Redirect to scorecard view
-      router.push(scorecardId ? `/scorecard/${scorecardId}` : '/scorecard');
+      router.push(scorecardId ? `/scorecard/${scorecardId}?completed=true` : `/scorecard/${newScorecardId}?completed=true`);
       
     } catch (error) {
       console.error('Error saving scorecard:', error);
@@ -677,7 +721,7 @@ export function ScorecardForm({
                 courseId={courseId}
               />
               
-              {/* NEW: Handicap Information Section */}
+              {/* Handicap Information Section */}
               <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-md">
                 <h3 className="text-sm font-medium mb-2">Handicap Information</h3>
                 
@@ -797,7 +841,7 @@ export function ScorecardForm({
             Cancel
           </Button>
           
-          {/* Navigation buttons based on current tab - FIXED button types */}
+          {/* Navigation buttons based on current tab */}
           {currentTab === 'details' ? (
             <Button
               type="button"

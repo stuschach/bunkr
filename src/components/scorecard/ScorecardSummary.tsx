@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -22,14 +23,31 @@ interface ScorecardSummaryProps {
 }
 
 export function ScorecardSummary({ scorecard, showActions = true }: ScorecardSummaryProps) {
+  const router = useRouter();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'summary' | 'holes' | 'stats'>('summary');
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [userHandicapIndex, setUserHandicapIndex] = useState<number | null>(null);
   const [isLoadingHandicap, setIsLoadingHandicap] = useState<boolean>(false);
+  const [roundCompleted, setRoundCompleted] = useState<boolean>(false);
 
   // Check if the current user is the owner of this scorecard
   const isOwner = user?.uid === scorecard.userId;
+
+  // Check URL parameters for completion status
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const completed = params.get('completed') === 'true';
+    setRoundCompleted(completed);
+    
+    // Clean up URL if needed
+    if (completed) {
+      const newUrl = window.location.pathname;
+      setTimeout(() => {
+        window.history.replaceState({}, '', newUrl);
+      }, 1000);
+    }
+  }, []);
 
   // Load the user's current handicap index for comparison
   useEffect(() => {
@@ -317,6 +335,18 @@ export function ScorecardSummary({ scorecard, showActions = true }: ScorecardSum
                 <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md">
                   {scorecard.notes}
                 </div>
+              </div>
+            )}
+            
+            {/* View Stats Button if round was just completed */}
+            {roundCompleted && (
+              <div className="mt-6 flex justify-center">
+                <Button 
+                  variant="primary" 
+                  onClick={() => router.push('/stats?refresh=true')}
+                >
+                  View Updated Stats
+                </Button>
               </div>
             )}
           </div>

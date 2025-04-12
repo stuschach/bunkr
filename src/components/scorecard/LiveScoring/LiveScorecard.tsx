@@ -1,9 +1,9 @@
 // src/components/scorecard/LiveScoring/LiveScorecard.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, addDoc, serverTimestamp, getDocs, query } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useNotification } from '@/lib/contexts/NotificationContext';
@@ -14,6 +14,10 @@ import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { formatScoreWithRelationToPar } from '@/lib/utils/formatting';
 import { Scorecard, HoleData } from '@/types/scorecard';
+import { fanoutPostToFeeds } from '@/lib/firebase/feed-service';
+import { DenormalizedAuthorData } from '@/types/post';
+import { HandicapService } from '@/lib/handicap/handicapService';
+import { debugLog } from '@/lib/utils/debug';
 
 interface LiveScorecardProps {
   scorecardId?: string;
@@ -32,7 +36,9 @@ export function LiveScorecard({ scorecardId, initialData }: LiveScorecardProps) 
   const [scorecardData, setScorecardData] = useState<Scorecard | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isFinishing, setIsFinishing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingCourseData, setIsLoadingCourseData] = useState<boolean>(false);
 
   // Get courseId and courseName from URL parameters or props
   useEffect(() => {
@@ -68,21 +74,32 @@ export function LiveScorecard({ scorecardId, initialData }: LiveScorecardProps) 
             setError('Scorecard not found');
           }
         } else if (initialData) {
-          // Create a new scorecard from initial data
-          const newScorecardId = `live-${Date.now()}`;
-          const emptyHoles: HoleData[] = [];
+          // First, load hole data from the course if available
+          const holeData = await loadCourseHoleData(initialData.courseId || 'temp-course');
           
-          // Initialize 18 empty holes
-          for (let i = 1; i <= 18; i++) {
-            emptyHoles.push({
-              number: i,
+          // Create a new scorecard from initial data
+          // CHANGE: Use Firestore's auto-generated ID instead of timestamp-based ID
+          const scorecardRef = doc(collection(db, 'scorecards'));
+          const newScorecardId = scorecardRef.id;
+          
+          let emptyHoles: HoleData[] = [];
+          
+          if (holeData && holeData.length === 18) {
+            // Use hole data loaded from the course
+            emptyHoles = holeData;
+            debugLog('Using hole data from course:', emptyHoles);
+          } else {
+            // Initialize 18 empty holes with default par
+            emptyHoles = Array.from({ length: 18 }, (_, i) => ({
+              number: i + 1,
               par: 4, // Default par
               score: 0,
               fairwayHit: null,
               greenInRegulation: false,
               putts: 0,
               penalties: 0,
-            });
+            }));
+            debugLog('Using default hole data');
           }
           
           const newScorecard: Scorecard = {
@@ -109,13 +126,15 @@ export function LiveScorecard({ scorecardId, initialData }: LiveScorecardProps) 
               greensInRegulation: 0,
               penalties: 0
             },
-            isPublic: true
+            isPublic: true,
+            // NEW: Add state field to track live vs completed rounds
+            state: 'live'
           };
           
           setScorecardData(newScorecard);
           
           // Save the new scorecard to Firestore
-          await setDoc(doc(db, 'scorecards', newScorecardId), {
+          await setDoc(scorecardRef, {
             ...newScorecard,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
@@ -133,6 +152,131 @@ export function LiveScorecard({ scorecardId, initialData }: LiveScorecardProps) 
     
     loadOrInitializeScorecard();
   }, [user, scorecardId, initialData]);
+
+  // Function to load hole data from the course
+  const loadCourseHoleData = async (courseId: string): Promise<HoleData[] | null> => {
+    if (!courseId || courseId === 'temp-course') return null;
+    
+    setIsLoadingCourseData(true);
+    
+    try {
+      debugLog(`Loading hole data for course: ${courseId}`);
+      
+      // Check first if the course exists
+      const courseRef = doc(db, 'courses', courseId);
+      const courseDoc = await getDoc(courseRef);
+      
+      if (!courseDoc.exists()) {
+        console.error(`Course with ID ${courseId} does not exist`);
+        return null;
+      }
+      
+      const courseData = courseDoc.data();
+      debugLog('Course data:', courseData);
+      
+      // Query for hole data
+      const holesRef = collection(db, 'courses', courseId, 'holes');
+      const holesSnapshot = await getDocs(query(holesRef));
+      
+      debugLog(`Found ${holesSnapshot.size} holes for course ${courseId}`);
+      
+      // Initialize 18 holes with default values
+      const holeData: HoleData[] = [];
+      for (let i = 1; i <= 18; i++) {
+        holeData.push({
+          number: i,
+          par: 4, // Default par
+          score: 0,
+          fairwayHit: null,
+          greenInRegulation: false,
+          putts: 0,
+          penalties: 0
+        });
+      }
+      
+      if (!holesSnapshot.empty) {
+        // Update holes with data from Firestore
+        holesSnapshot.docs.forEach(doc => {
+          const holeNumber = parseInt(doc.id);
+          if (holeNumber >= 1 && holeNumber <= 18) {
+            const holeIndex = holeNumber - 1;
+            const data = doc.data();
+            
+            debugLog(`Hole ${holeNumber} data:`, data);
+            
+            holeData[holeIndex] = {
+              ...holeData[holeIndex],
+              par: data.par || 4
+            };
+          }
+        });
+        
+        debugLog('Processed hole data:', holeData);
+        return holeData;
+      } else {
+        debugLog('No hole data found, using defaults');
+        
+        // Set all pars to match the course total par if available
+        if (courseData.par) {
+          const totalPar = courseData.par;
+          debugLog(`Setting default pars to match course total par: ${totalPar}`);
+          
+          // Create a standard layout:
+          // - 4 par 3s (holes 2, 7, 11, 16)
+          // - 4 par 5s (holes 4, 9, 13, 18)
+          // - The rest are par 4s
+          const par3Holes = [2, 7, 11, 16];
+          const par5Holes = [4, 9, 13, 18];
+          
+          holeData.forEach((hole, index) => {
+            const holeNumber = index + 1;
+            if (par3Holes.includes(holeNumber)) {
+              holeData[index].par = 3;
+            } else if (par5Holes.includes(holeNumber)) {
+              holeData[index].par = 5;
+            } else {
+              holeData[index].par = 4;
+            }
+          });
+          
+          // Adjust if necessary to match the course par
+          let calculatedPar = holeData.reduce((sum, hole) => sum + hole.par, 0);
+          const diff = totalPar - calculatedPar;
+          
+          if (diff !== 0) {
+            debugLog(`Adjusting pars to match course total. Difference: ${diff}`);
+            
+            if (diff > 0) {
+              // Need to increase some pars
+              for (let i = 0; i < diff && i < holeData.length; i++) {
+                // Start with par 4s that aren't already par 5s
+                const hole = holeData.find(h => h.par === 4 && !par5Holes.includes(h.number));
+                if (hole) {
+                  hole.par = 5;
+                }
+              }
+            } else if (diff < 0) {
+              // Need to decrease some pars
+              for (let i = 0; i < Math.abs(diff) && i < holeData.length; i++) {
+                // Start with par 4s that aren't already par 3s
+                const hole = holeData.find(h => h.par === 4 && !par3Holes.includes(h.number));
+                if (hole) {
+                  hole.par = 3;
+                }
+              }
+            }
+          }
+        }
+        
+        return holeData;
+      }
+    } catch (error) {
+      console.error('Error loading course hole data:', error);
+      return null;
+    } finally {
+      setIsLoadingCourseData(false);
+    }
+  };
 
   // Update a hole's data
   const updateHoleData = async (holeNumber: number, data: Partial<HoleData>) => {
@@ -209,9 +353,134 @@ export function LiveScorecard({ scorecardId, initialData }: LiveScorecardProps) 
     }
   };
 
-  // Finish the round
-  const finishRound = () => {
-    router.push(`/scorecard/${scorecardData?.id}`);
+  // Finish the round and post to feed
+  const finishRound = async () => {
+    if (!scorecardData || !user) return;
+    
+    try {
+      setIsFinishing(true);
+      
+      // Create post content with proper formatting for the score relative to par
+      let scoreToParText = '';
+      const scoreToPar = scorecardData.scoreToPar || 0; // Default to 0 if undefined
+      
+      if (scoreToPar === 0) {
+        scoreToParText = 'even par';
+      } else if (scoreToPar > 0) {
+        scoreToParText = `+${scoreToPar}`;
+      } else {
+        scoreToParText = `${scoreToPar}`;
+      }
+      
+      const postContent = `Just finished a round at ${scorecardData.courseName} with a score of ${scorecardData.totalScore} (${scoreToParText})!`;
+      
+      // Make sure we have a valid ID
+      const id = scorecardData.id;
+      
+      // Format the scorecard data for posting to feed
+      const postData = {
+        authorId: user.uid,
+        content: postContent,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        postType: 'round',
+        roundId: id,
+        
+        // Include scorecard data to display in the feed
+        courseName: scorecardData.courseName,
+        coursePar: scorecardData.coursePar,
+        totalScore: scorecardData.totalScore,
+        scoreToPar: scorecardData.scoreToPar,
+        holes: scorecardData.holes,
+        teeBox: scorecardData.teeBox,
+        stats: scorecardData.stats,
+        // CHANGE HERE: Ensure date is in proper format
+        date: typeof scorecardData.date === 'string' ? scorecardData.date : new Date().toISOString().split('T')[0],
+        
+        location: {
+          name: scorecardData.courseName,
+          id: scorecardData.courseId
+        },
+        visibility: scorecardData.isPublic ? 'public' : 'private',
+        likes: 0,
+        comments: 0,
+        likedBy: [],
+        hashtags: ['golf', 'scorecard'],
+        media: []
+      };
+      
+      // Add to the posts collection
+      const postRef = await addDoc(collection(db, 'posts'), postData);
+      
+      // Create denormalized author data for the fanout
+      const authorData: DenormalizedAuthorData = {
+        uid: user.uid,
+        displayName: user.displayName || '',
+        photoURL: user.photoURL || '',
+        handicapIndex: user.handicapIndex !== undefined ? user.handicapIndex : null
+      };
+      
+      // Fan out the post to followers' feeds
+      await fanoutPostToFeeds(postRef.id, user.uid, authorData, 'round');
+      
+      // Make sure the scorecard document has all necessary fields
+      await updateDoc(doc(db, 'scorecards', id), {
+        userId: user.uid,
+        courseId: scorecardData.courseId,
+        courseName: scorecardData.courseName,
+        coursePar: scorecardData.coursePar,
+        date: typeof scorecardData.date === 'string' ? scorecardData.date : new Date().toISOString().split('T')[0],
+        totalScore: scorecardData.totalScore,
+        scoreToPar: scorecardData.scoreToPar,
+        courseHandicap: scorecardData.courseHandicap,
+        teeBox: scorecardData.teeBox,
+        stats: scorecardData.stats,
+        isPublic: scorecardData.isPublic,
+        finalizedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        isCompleted: true,
+        // NEW: Update state to completed
+        state: 'completed'
+      });
+      
+      debugLog('Round document fully updated with final stats');
+      
+      // ADD THIS CODE: Update the user's handicap
+      try {
+        debugLog('Updating handicap after round completion:', id);
+        await HandicapService.updateHandicapAfterRound(user.uid, id);
+      } catch (handicapError) {
+        console.error('Error updating handicap:', handicapError);
+        showNotification({
+          type: 'warning',
+          title: 'Handicap Update Issue',
+          description: 'Your scorecard was saved but your handicap could not be updated.'
+        });
+      }
+      
+      showNotification({
+        type: 'success',
+        title: 'Round Completed',
+        description: 'Your round has been posted to your feed!'
+      });
+      
+      debugLog('Round posted to feed successfully');
+      
+      // Navigate to the scorecard view
+      router.push(`/scorecard/${id}?completed=true`);
+    } catch (error) {
+      console.error('Error posting round to feed:', error);
+      showNotification({
+        type: 'warning',
+        title: 'Partial Success',
+        description: 'Your round was saved but could not be posted to your feed.'
+      });
+      
+      // Still navigate to the scorecard view even if posting fails
+      router.push(`/scorecard/${scorecardData.id}`);
+    } finally {
+      setIsFinishing(false);
+    }
   };
 
   // Calculate stats based on hole data
@@ -239,7 +508,7 @@ export function LiveScorecard({ scorecardId, initialData }: LiveScorecardProps) 
         // Fairway hit (excludes par 3s)
         if (hole.par > 3) {
           fairwaysTotal++;
-          if (hole.fairwayHit) fairwaysHit++;
+          if (hole.fairwayHit === true) fairwaysHit++;
         }
         
         // Green in regulation
@@ -369,8 +638,12 @@ export function LiveScorecard({ scorecardId, initialData }: LiveScorecardProps) 
         <LiveStats scorecard={scorecardData} />
         
         <div className="mt-4 flex justify-center">
-          <Button onClick={finishRound}>
-            Finish Round
+          <Button 
+            onClick={finishRound}
+            disabled={isFinishing}
+            isLoading={isFinishing}
+          >
+            {isFinishing ? 'Finishing...' : 'Finish Round'}
           </Button>
         </div>
       </div>

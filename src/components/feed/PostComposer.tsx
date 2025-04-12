@@ -1,28 +1,29 @@
 // src/components/feed/PostComposer.tsx
-'use client';
+// Modified to use the new usePostCreation hook and support feed refresh
 
-import React, { useState, useRef } from 'react';
-import { collection, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import React, { useState, useRef, useCallback } from 'react';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/lib/firebase/config';
+import { storage } from '@/lib/firebase/config';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Avatar } from '@/components/ui/Avatar';
 import { useNotification } from '@/lib/contexts/NotificationContext';
 import { Media } from '@/types/post';
 import { UserProfile } from '@/types/auth';
+import { usePostCreation } from '@/lib/hooks/usePostCreation';
 
 interface PostComposerProps {
   user: UserProfile;
+  onPostCreated?: () => void; // Add callback for refreshing feed
 }
 
-export function PostComposer({ user }: PostComposerProps) {
+export function PostComposer({ user, onPostCreated }: PostComposerProps) {
   const [postText, setPostText] = useState('');
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [mediaPreviewUrls, setMediaPreviewUrls] = useState<string[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { showNotification } = useNotification();
+  const { createPost, isCreating } = usePostCreation();
 
   // Handle text change
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -60,8 +61,6 @@ export function PostComposer({ user }: PostComposerProps) {
   const handleSubmit = async () => {
     if (!postText.trim() && mediaFiles.length === 0) return;
 
-    setIsSubmitting(true);
-    
     try {
       // Upload media files if any
       const mediaItems: Media[] = [];
@@ -69,7 +68,7 @@ export function PostComposer({ user }: PostComposerProps) {
       if (mediaFiles.length > 0) {
         for (const file of mediaFiles) {
           const mediaId = Date.now().toString() + Math.random().toString(36).substring(2);
-          const fileExtension = file.name.split('.').pop();
+          const fileExtension = file.name.split('.').pop() || 'jpg';
           const filePath = `users/${user.uid}/posts/${mediaId}.${fileExtension}`;
           const storageRef = ref(storage, filePath);
           
@@ -91,43 +90,29 @@ export function PostComposer({ user }: PostComposerProps) {
       // Extract hashtags from post text
       const hashtagRegex = /#(\w+)/g;
       const hashtags: string[] = [];
-      let match;
+      let match: RegExpExecArray | null;
       
       while ((match = hashtagRegex.exec(postText)) !== null) {
         hashtags.push(match[1].toLowerCase());
       }
 
-      // Create post document
-      const postRef = await addDoc(collection(db, 'posts'), {
-        authorId: user.uid,
+      // Use the new createPost hook function
+      await createPost({
         content: postText,
         media: mediaItems,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        postType: 'regular',
         visibility: 'public',
-        likes: 0,
-        comments: 0,
-        likedBy: [], // Array to track users who liked the post
-        hashtags,
-      });
-
-      // Update the post with its ID (useful for some operations)
-      await updateDoc(postRef, {
-        id: postRef.id
-      });
+        hashtags
+      }, 'regular');
 
       // Reset form
       setPostText('');
       setMediaFiles([]);
       setMediaPreviewUrls([]);
       
-      // Show success notification
-      showNotification({
-        type: 'success',
-        title: 'Post created',
-        description: 'Your post has been published to your feed'
-      });
+      // Call the onPostCreated callback to refresh the feed
+      if (onPostCreated) {
+        onPostCreated();
+      }
     } catch (error) {
       console.error('Error creating post:', error);
       showNotification({
@@ -135,8 +120,6 @@ export function PostComposer({ user }: PostComposerProps) {
         title: 'Error',
         description: 'Failed to create post. Please try again.'
       });
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -162,7 +145,7 @@ export function PostComposer({ user }: PostComposerProps) {
               onChange={handleTextChange}
               className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
               rows={2}
-              disabled={isSubmitting}
+              disabled={isCreating}
             />
             
             {/* Media preview section */}
@@ -217,13 +200,13 @@ export function PostComposer({ user }: PostComposerProps) {
                   className="hidden"
                   accept="image/*,video/*"
                   multiple
-                  disabled={isSubmitting}
+                  disabled={isCreating}
                 />
                 <Button
                   type="button"
                   variant="ghost"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isSubmitting}
+                  disabled={isCreating}
                 >
                   <svg 
                     xmlns="http://www.w3.org/2000/svg" 
@@ -245,7 +228,7 @@ export function PostComposer({ user }: PostComposerProps) {
                   type="button"
                   variant="ghost"
                   onClick={handleCreateGroup}
-                  disabled={isSubmitting}
+                  disabled={isCreating}
                 >
                   <svg 
                     xmlns="http://www.w3.org/2000/svg" 
@@ -266,8 +249,8 @@ export function PostComposer({ user }: PostComposerProps) {
               </div>
               <Button
                 onClick={handleSubmit}
-                disabled={(!postText.trim() && mediaFiles.length === 0) || isSubmitting}
-                isLoading={isSubmitting}
+                disabled={(!postText.trim() && mediaFiles.length === 0) || isCreating}
+                isLoading={isCreating}
               >
                 Post
               </Button>

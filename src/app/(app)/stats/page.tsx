@@ -1,6 +1,7 @@
+// src/app/(app)/stats/page.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { collection, query, where, orderBy, getDocs, limit, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
@@ -20,6 +21,7 @@ import { HoleTypeAnalysis } from '@/components/stats/HoleTypeAnalysis';
 import { RoundDetails } from '@/components/stats/RoundDetails';
 import { Scorecard } from '@/types/scorecard';
 import { UserProfile } from '@/types/auth';
+import { debugLog } from '@/lib/utils/debug';
 
 export default function StatsPage() {
   const router = useRouter();
@@ -32,6 +34,110 @@ export default function StatsPage() {
   const [showEmptyState, setShowEmptyState] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
+  // Refresh stats data
+  const refreshStats = useCallback(async () => {
+    if (authLoading || !user) return;
+    
+    setIsLoading(true);
+    debugLog('Refreshing stats data...');
+    
+    try {
+      // Fetch user profile to get handicap index
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      
+      if (userDocSnap.exists()) {
+        const userData = userDocSnap.data();
+        setUserProfile({
+          uid: userDocSnap.id,
+          email: userData.email || null,
+          displayName: userData.displayName || null,
+          photoURL: userData.photoURL || null,
+          createdAt: userData.createdAt || new Date(),
+          handicapIndex: userData.handicapIndex || null,
+          homeCourse: userData.homeCourse || null,
+          profileComplete: userData.profileComplete || false,
+          bio: userData.bio || null
+        });
+      }
+
+      // Build query based on filters
+      let roundsQuery = query(
+        collection(db, 'scorecards'),
+        where('userId', '==', user.uid),
+        // NEW: Add filter for completed rounds only
+        where('state', '==', 'completed'),
+        orderBy('date', 'desc')
+      );
+
+      // Apply time filter if needed
+      if (timeRange !== 'all') {
+        const dateLimit = new Date();
+        if (timeRange === 'last30') {
+          dateLimit.setDate(dateLimit.getDate() - 30);
+        } else if (timeRange === 'last90') {
+          dateLimit.setDate(dateLimit.getDate() - 90);
+        } else if (timeRange === 'thisYear') {
+          dateLimit.setMonth(0, 1); // January 1st of current year
+        }
+        
+        // CHANGE THIS: Use a more robust date comparison
+        const dateString = dateLimit.toISOString().split('T')[0];
+        debugLog('Filtering rounds since:', dateString);
+        
+        // Use a more flexible query for dates
+        roundsQuery = query(
+          roundsQuery,
+          where('date', '>=', dateString)
+        );
+      }
+
+      // Apply course filter if needed
+      if (courseFilter !== 'all') {
+        roundsQuery = query(
+          roundsQuery,
+          where('courseId', '==', courseFilter)
+        );
+      }
+
+      // Add debugging to see what's coming back
+      debugLog('Executing rounds query...');
+      const querySnapshot = await getDocs(roundsQuery);
+      debugLog(`Found ${querySnapshot.size} rounds matching the criteria`);
+      
+      // Debug the documents that were found
+      debugLog('Document IDs found:', querySnapshot.docs.map(doc => doc.id));
+      
+      const roundsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Scorecard));
+      
+      debugLog('Rounds data loaded:', roundsData.length, 'rounds');
+      setRounds(roundsData);
+      
+      // Set empty state flag if no rounds
+      setShowEmptyState(roundsData.length === 0);
+      
+      // Extract unique courses for filter
+      const uniqueCourses = Array.from(
+        new Set(roundsData.map(round => round.courseName))
+      ).map(name => {
+        const round = roundsData.find(r => r.courseName === name);
+        return {
+          id: round?.courseId || name,
+          name: name
+        };
+      });
+      
+      setCourses(uniqueCourses);
+    } catch (error) {
+      console.error('Error refreshing stats:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, authLoading, timeRange, courseFilter]);
+
   // Fetch user's profile and rounds
   useEffect(() => {
     if (authLoading) return;
@@ -40,91 +146,23 @@ export default function StatsPage() {
       return;
     }
 
-    const loadUserData = async () => {
-      setIsLoading(true);
-      try {
-        // Fetch user profile to get handicap index
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        
-        if (userDocSnap.exists()) {
-          const userData = userDocSnap.data();
-          setUserProfile({
-            uid: userDocSnap.id,
-            email: userData.email || null,
-            displayName: userData.displayName || null,
-            photoURL: userData.photoURL || null,
-            createdAt: userData.createdAt || new Date(),
-            handicapIndex: userData.handicapIndex || null,
-            homeCourse: userData.homeCourse || null,
-            profileComplete: userData.profileComplete || false,
-            bio: userData.bio || null
-          });
-        }
+    refreshStats();
+  }, [user, authLoading, router, timeRange, courseFilter, refreshStats]);
 
-        // Build query based on filters
-        let roundsQuery = query(
-          collection(db, 'scorecards'),
-          where('userId', '==', user.uid),
-          orderBy('date', 'desc')
-        );
-
-        // Apply time filter if needed
-        if (timeRange !== 'all') {
-          const dateLimit = new Date();
-          if (timeRange === 'last30') {
-            dateLimit.setDate(dateLimit.getDate() - 30);
-          } else if (timeRange === 'last90') {
-            dateLimit.setDate(dateLimit.getDate() - 90);
-          } else if (timeRange === 'thisYear') {
-            dateLimit.setMonth(0, 1); // January 1st of current year
-          }
-          roundsQuery = query(
-            roundsQuery,
-            where('date', '>=', dateLimit.toISOString().split('T')[0])
-          );
-        }
-
-        // Apply course filter if needed
-        if (courseFilter !== 'all') {
-          roundsQuery = query(
-            roundsQuery,
-            where('courseId', '==', courseFilter)
-          );
-        }
-
-        const querySnapshot = await getDocs(roundsQuery);
-        const roundsData = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Scorecard));
-
-        setRounds(roundsData);
-        
-        // Set empty state flag if no rounds
-        setShowEmptyState(roundsData.length === 0);
-        
-        // Extract unique courses for filter
-        const uniqueCourses = Array.from(
-          new Set(roundsData.map(round => round.courseName))
-        ).map(name => {
-          const round = roundsData.find(r => r.courseName === name);
-          return {
-            id: round?.courseId || name,
-            name: name
-          };
-        });
-        
-        setCourses(uniqueCourses);
-      } catch (error) {
-        console.error('Error loading user data:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadUserData();
-  }, [user, authLoading, router, timeRange, courseFilter]);
+  // Check for URL parameters on load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shouldRefresh = params.get('refresh') === 'true';
+    
+    if (shouldRefresh) {
+      debugLog('Stats refresh requested via URL parameter');
+      refreshStats();
+      
+      // Clean up URL
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, '', newUrl);
+    }
+  }, [refreshStats]);
 
   // Loading state
   if (authLoading || isLoading) {
@@ -181,32 +219,42 @@ export default function StatsPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
         <Heading level={2}>Golf Statistics</Heading>
         
-        <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
-          <Select
-            options={[
-              { value: 'all', label: 'All Time' },
-              { value: 'last30', label: 'Last 30 Days' },
-              { value: 'last90', label: 'Last 90 Days' },
-              { value: 'thisYear', label: 'This Year' },
-            ]}
-            value={timeRange}
-            onChange={setTimeRange}
-            className="md:w-40"
-          />
-          
-          <Select
-            options={[
-              { value: 'all', label: 'All Courses' },
-              ...courses.map(course => ({
-                value: course.id,
-                label: course.name
-              }))
-            ]}
-            value={courseFilter}
-            onChange={setCourseFilter}
-            className="md:w-56"
-          />
+        <div className="flex items-center space-x-2">
+          <Button 
+            variant="outline" 
+            onClick={refreshStats} 
+            disabled={isLoading}
+          >
+            {isLoading ? <LoadingSpinner size="sm" /> : 'Refresh Stats'}
+          </Button>
         </div>
+      </div>
+      
+      <div className="flex flex-col md:flex-row gap-3 w-full mb-4">
+        <Select
+          options={[
+            { value: 'all', label: 'All Time' },
+            { value: 'last30', label: 'Last 30 Days' },
+            { value: 'last90', label: 'Last 90 Days' },
+            { value: 'thisYear', label: 'This Year' },
+          ]}
+          value={timeRange}
+          onChange={setTimeRange}
+          className="md:w-40"
+        />
+        
+        <Select
+          options={[
+            { value: 'all', label: 'All Courses' },
+            ...courses.map(course => ({
+              value: course.id,
+              label: course.name
+            }))
+          ]}
+          value={courseFilter}
+          onChange={setCourseFilter}
+          className="md:w-56"
+        />
       </div>
 
       {/* Stats Overview - Now passing the user's handicap index */}

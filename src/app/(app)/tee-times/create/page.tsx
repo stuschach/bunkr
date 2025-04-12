@@ -21,6 +21,7 @@ export default function CreateTeeTimes() {
     setFormError(null);
     
     try {
+      // Use the useTeeTime hook which now internally uses usePostCreation
       const teeTimeId = await createTeeTime(data);
       
       if (teeTimeId) {

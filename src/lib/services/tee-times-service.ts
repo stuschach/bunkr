@@ -55,7 +55,11 @@ import {
     };
   };
   
-  // Create a new tee time
+  /**
+   * Create a new tee time
+   * NOTE: This function no longer creates the post directly.
+   * Post creation is handled by the usePostCreation hook
+   */
   export const createTeeTime = async (
     userId: string, 
     teeTimeData: TeeTimeFormData
@@ -66,7 +70,7 @@ import {
       const [hours, minutes] = teeTimeData.time.split(':').map(Number);
       dateTime.setHours(hours, minutes);
       
-      // First, create the tee time document
+      // Create the tee time document
       const teeTimeRef = await addDoc(collection(db, TEE_TIMES_COLLECTION), {
         creatorId: userId,
         courseName: teeTimeData.courseName,
@@ -89,39 +93,15 @@ import {
         isCreator: true
       });
       
-      // Add reference to user's tee times (now as a subcollection)
+      // Add reference to user's tee times (as a subcollection)
       await addDoc(collection(db, USER_TEE_TIMES_COLLECTION, userId, 'teeTimes'), {
         teeTimeId: teeTimeRef.id,
         role: 'creator',
         status: 'confirmed' as PlayerStatus,
       });
       
-      // Create a post
-      const postRef = await addDoc(collection(db, 'posts'), {
-        authorId: userId,
-        content: `I'm hosting a tee time at ${teeTimeData.courseName} on ${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. Looking for ${teeTimeData.maxPlayers - 1} more players!`,
-        postType: 'regular', // Start as a regular post
-        visibility: teeTimeData.visibility === 'private' ? 'private' : 'public',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        likes: 0,
-        comments: 0,
-        likedBy: []
-      });
-      
-      // After a small delay, update the post to be a tee-time post
-      setTimeout(async () => {
-        try {
-          await updateDoc(doc(db, 'posts', postRef.id), {
-            postType: 'tee-time',
-            teeTimeId: teeTimeRef.id,
-            courseName: teeTimeData.courseName,
-            maxPlayers: teeTimeData.maxPlayers
-          });
-        } catch (updateError) {
-          console.error('Error updating post type:', updateError);
-        }
-      }, 1000);
+      // Note: Post creation is now handled by the usePostCreation hook
+      // in the component/hook layer, not here
       
       return teeTimeRef.id;
     } catch (error) {

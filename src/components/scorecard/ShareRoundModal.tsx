@@ -7,11 +7,12 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useNotification } from '@/lib/contexts/NotificationContext';
-
 import { Dialog, DialogHeader, DialogTitle, DialogContent, DialogFooter } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Scorecard } from '@/types/scorecard';
 import { formatScoreWithRelationToPar } from '@/lib/utils/formatting';
+import { fanoutPostToFeeds } from '@/lib/firebase/feed-service';
+import { DenormalizedAuthorData } from '@/types/post';
 
 interface ShareRoundModalProps {
   open: boolean;
@@ -34,63 +35,76 @@ export function ShareRoundModal({ open, onClose, scorecard }: ShareRoundModalPro
     }
   }, [scorecard]);
 
-  const handleShareToFeed = async () => {
-    if (!user) {
-      showNotification({
-        type: 'error',
-        title: 'Authentication required',
-        description: 'You must be logged in to share to the feed'
-      });
-      return;
-    }
+  // Update only the handleShareToFeed function in ShareRoundModal.tsx
 
-    setIsSharing(true);
+const handleShareToFeed = async () => {
+  if (!user) {
+    showNotification({
+      type: 'error',
+      title: 'Authentication required',
+      description: 'You must be logged in to share to the feed'
+    });
+    return;
+  }
 
-    try {
-      // Create a new post in the 'posts' collection
-      const postData = {
-        authorId: user.uid,
-        content: message,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        postType: 'round',
-        roundId: scorecard.id,
-        location: {
-          name: scorecard.courseName,
-          id: scorecard.courseId
-        },
-        visibility: 'public',
-        likes: 0,
-        comments: 0,
-        likedByUser: false,
-        hashtags: ['golf', 'scorecard'],
-        media: [] // No media for now
-      };
+  setIsSharing(true);
 
-      const postRef = await addDoc(collection(db, 'posts'), postData);
+  try {
+    // Create a new post in the 'posts' collection
+    const postData = {
+      authorId: user.uid,
+      content: message,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      postType: 'round',
+      roundId: scorecard.id,
+      location: {
+        name: scorecard.courseName,
+        id: scorecard.courseId
+      },
+      visibility: 'public',
+      likes: 0,
+      comments: 0,
+      likedByUser: false,
+      hashtags: ['golf', 'scorecard'],
+      media: [] // No media for now
+    };
 
-      showNotification({
-        type: 'success',
-        title: 'Round shared',
-        description: 'Your round has been shared to your feed'
-      });
+    const postRef = await addDoc(collection(db, 'posts'), postData);
+    
+    // Create denormalized author data for the fanout
+    const authorData: DenormalizedAuthorData = {
+      uid: user.uid,
+      displayName: user.displayName || '',
+      photoURL: user.photoURL || '',
+      handicapIndex: user.handicapIndex !== undefined ? user.handicapIndex : null
+    };
+    
+    // Fan out the post to followers' feeds
+    await fanoutPostToFeeds(postRef.id, user.uid, authorData, 'round');
 
-      // Close the modal
-      onClose();
+    showNotification({
+      type: 'success',
+      title: 'Round shared',
+      description: 'Your round has been shared to your feed'
+    });
 
-      // Navigate to the feed to see the post
-      router.push('/feed');
-    } catch (error) {
-      console.error('Error sharing round:', error);
-      showNotification({
-        type: 'error',
-        title: 'Error',
-        description: 'Failed to share your round. Please try again.'
-      });
-    } finally {
-      setIsSharing(false);
-    }
-  };
+    // Close the modal
+    onClose();
+
+    // Navigate to the feed to see the post
+    router.push('/feed');
+  } catch (error) {
+    console.error('Error sharing round:', error);
+    showNotification({
+      type: 'error',
+      title: 'Error',
+      description: 'Failed to share your round. Please try again.'
+    });
+  } finally {
+    setIsSharing(false);
+  }
+};
 
   return (
     <Dialog open={open} onClose={onClose}>

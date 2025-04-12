@@ -18,6 +18,39 @@ interface TeeTimePostProps {
   onShare: () => void;
 }
 
+// Helper function to safely get date regardless of source format
+const safelyGetDate = (dateValue: any): Date => {
+  if (!dateValue) return new Date();
+  
+  try {
+    // Handle Firestore Timestamp objects
+    if (typeof dateValue.toDate === 'function') {
+      return dateValue.toDate();
+    }
+    
+    // Handle JavaScript Date objects
+    if (dateValue instanceof Date) {
+      return dateValue;
+    }
+    
+    // Handle Firestore timestamp-like objects
+    if (dateValue.seconds !== undefined) {
+      return new Date(dateValue.seconds * 1000 + (dateValue.nanoseconds || 0) / 1000000);
+    }
+    
+    // Handle ISO strings
+    if (typeof dateValue === 'string') {
+      return new Date(dateValue);
+    }
+    
+    // Default fallback
+    return new Date();
+  } catch (error) {
+    console.error('Error parsing date:', error);
+    return new Date();
+  }
+};
+
 export function TeeTimePost({ 
   post, 
   onLike,
@@ -26,23 +59,38 @@ export function TeeTimePost({
 }: TeeTimePostProps) {
   const router = useRouter();
 
-  // Format date and time
-  const formattedDate = post.dateTime ? format(
-    new Date(post.dateTime.toDate()),
-    'EEE, MMM d, yyyy'
-  ) : '';
+  // Safely format date and time with error handling
+  const getFormattedDate = () => {
+    try {
+      const date = post.dateTime ? safelyGetDate(post.dateTime) : new Date();
+      return format(date, 'EEE, MMM d, yyyy');
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'Date unavailable';
+    }
+  };
   
-  const formattedTime = post.dateTime ? format(
-    new Date(post.dateTime.toDate()),
-    'h:mm a'
-  ) : '';
+  const getFormattedTime = () => {
+    try {
+      const date = post.dateTime ? safelyGetDate(post.dateTime) : new Date();
+      return format(date, 'h:mm a');
+    } catch (error) {
+      console.error('Error formatting time:', error);
+      return 'Time unavailable';
+    }
+  };
 
   // Calculate time since post creation
-  const timeAgo = post.createdAt ? formatDistance(
-    new Date(post.createdAt),
-    new Date(),
-    { addSuffix: true }
-  ) : '';
+  const getTimeAgo = () => {
+    try {
+      const createdAt = post.createdAt instanceof Date ? 
+        post.createdAt : safelyGetDate(post.createdAt);
+      return formatDistance(createdAt, new Date(), { addSuffix: true });
+    } catch (error) {
+      console.error('Error calculating time ago:', error);
+      return 'Recently';
+    }
+  };
 
   const handleViewTeeTime = () => {
     router.push(`/tee-times/${post.teeTimeId}`);
@@ -59,7 +107,7 @@ export function TeeTimePost({
           />
           <div>
             <div className="font-medium">{post.author?.displayName}</div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">{timeAgo}</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">{getTimeAgo()}</div>
           </div>
         </div>
         
@@ -78,7 +126,7 @@ export function TeeTimePost({
           <div className="grid grid-cols-2 gap-4 mb-3">
             <div>
               <div className="text-sm text-gray-500 dark:text-gray-400">Date & Time</div>
-              <div className="font-medium">{formattedDate} • {formattedTime}</div>
+              <div className="font-medium">{getFormattedDate()} • {getFormattedTime()}</div>
             </div>
             <div>
               <div className="text-sm text-gray-500 dark:text-gray-400">Group Size</div>

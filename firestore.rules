@@ -24,6 +24,30 @@ service cloud.firestore {
         (data.profileComplete is bool);
     }
     
+    // USER FEEDS - NEW COLLECTION FOR FEED FANOUT PATTERN
+    match /feeds/{userId}/posts/{postId} {
+      // Allow users to read their own feed
+      allow read: if isOwner(userId);
+      
+      // Allow creation in another user's feed if:
+      // 1. The user is authenticated
+      // 2. The post references an existing post
+      // 3. The post has the correct author ID in it (cannot fake authorship)
+      allow create: if isSignedIn() && 
+                     exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)) &&
+                     request.resource.data.authorId == 
+                     get(/databases/$(database)/documents/posts/$(request.resource.data.postId)).data.authorId;
+      
+      // Allow updates only for specific fields (like updating like counts, etc.)
+      allow update: if isSignedIn() && 
+                     request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['likes', 'comments', 'likedByUser']);
+      
+      // Allow authors to delete their post from all feeds
+      allow delete: if isSignedIn() && 
+                     get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.authorId == request.auth.uid;
+    }
+    
     // User profiles - secure user data
     match /users/{userId} {
       // Allow read if signed in

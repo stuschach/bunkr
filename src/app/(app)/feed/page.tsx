@@ -1,11 +1,11 @@
 // src/app/(app)/feed/page.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { FeedLayout } from '@/components/feed/FeedLayout';
 import { PostComposer } from '@/components/feed/PostComposer';
 import { FeedFilters } from '@/components/feed/FeedFilters';
-import { PostList } from '@/components/feed/PostList';
+import { OptimizedPostList } from '@/components/feed/OptimizedPostList';
 import { SuggestedUsers } from '@/components/feed/SuggestedUsers';
 import { TrendingCourses } from '@/components/feed/TrendingCourses';
 import { UpcomingEvents } from '@/components/feed/UpcomingEvents';
@@ -19,6 +19,8 @@ export default function FeedPage() {
   const router = useRouter();
   const [feedFilter, setFeedFilter] = useState<'all' | 'following'>('all');
   const [contentTypeFilter, setContentTypeFilter] = useState<'all' | 'posts' | 'rounds' | 'tee-times'>('all');
+  // State to store the refresh function once OptimizedPostList is ready
+  const [refreshFeed, setRefreshFeed] = useState<(() => void) | null>(null);
 
   // Check authentication
   useEffect(() => {
@@ -27,10 +29,10 @@ export default function FeedPage() {
     }
   }, [user, loading, router]);
 
-  // Effect to clear console when filter changes (debugging aid)
-  useEffect(() => {
-    console.log(`Filter changed to: ${feedFilter}, content type: ${contentTypeFilter}`);
-  }, [feedFilter, contentTypeFilter]);
+  // Handler to receive the refresh function from OptimizedPostList
+  const handleRefreshReady = useCallback((refreshFn: () => void) => {
+    setRefreshFeed(() => refreshFn);
+  }, []);
 
   if (loading) {
     return (
@@ -48,7 +50,11 @@ export default function FeedPage() {
     <FeedLayout
       main={
         <>
-          <PostComposer user={user} />
+          <PostComposer 
+            user={user} 
+            onPostCreated={refreshFeed ? refreshFeed : undefined}
+          />
+          
           <div className="sticky top-0 bg-white dark:bg-gray-900 z-10 pt-2 pb-0 mb-0">
             <FeedFilters activeFilter={feedFilter} onFilterChange={setFeedFilter} />
             {/* Content type filters */}
@@ -83,11 +89,11 @@ export default function FeedPage() {
               </Badge>
             </div>
           </div>
-          {/* Force complete remount of PostList when filter changes */}
-          <PostList 
-            key={`feed-${feedFilter}-${contentTypeFilter}`} 
+          
+          <OptimizedPostList 
             filter={feedFilter} 
-            contentTypeFilter={contentTypeFilter} 
+            contentTypeFilter={contentTypeFilter}
+            onRefreshReady={handleRefreshReady}
           />
         </>
       }

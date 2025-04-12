@@ -34,10 +34,17 @@ service firebase.storage {
       allow write: if isOwner(userId) && isImage() && isValidFileSize();
     }
     
-    // User cover photos - added this new rule
+    // User cover photos
     match /users/{userId}/covers/{fileName} {
       allow read: if isSignedIn();
       allow write: if isOwner(userId) && isImage() && isValidFileSize();
+    }
+    
+    // User post images - NEW RULE
+    match /users/{userId}/posts/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) && isImage() && isValidFileSize();
+      allow delete: if isOwner(userId);
     }
     
     // Golf course images - public read, admin write

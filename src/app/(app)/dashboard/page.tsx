@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useTeeTime } from '@/lib/hooks/useTeeTime';
 import { useMessages } from '@/lib/hooks/useMessages';
-import { useFeedItems } from '@/lib/hooks/useFeedItems';
+import { useFeed } from '@/lib/hooks/useFeed';
 import { collection, query, where, orderBy, getDocs, limit, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { ensureDate } from '@/lib/utils/date-format';
@@ -40,7 +40,7 @@ export default function DashboardPage() {
     posts: activityFeed,
     initialLoading: feedLoading,
     error: feedError
-  } = useFeedItems({ pageSize: 5 });
+  } = useFeed({ pageSize: 5 });
   
   // State for dashboard data
   const [isLoading, setIsLoading] = useState(true);
