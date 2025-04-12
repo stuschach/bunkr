@@ -1,15 +1,17 @@
 // src/components/scorecard/ScorecardSummary.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase/config';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { HoleByHole } from './HoleByHole';
 import { StatTracker } from './StatTracker';
 import { ShareRoundModal } from './ShareRoundModal';
-import { formatScoreWithRelationToPar } from '@/lib/utils/formatting';
+import { formatScoreWithRelationToPar, formatHandicapIndex } from '@/lib/utils/formatting';
 import { shareContent, isShareSupported } from '@/lib/utils/share';
 import { Scorecard } from '@/types/scorecard';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -23,9 +25,37 @@ export function ScorecardSummary({ scorecard, showActions = true }: ScorecardSum
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'summary' | 'holes' | 'stats'>('summary');
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [userHandicapIndex, setUserHandicapIndex] = useState<number | null>(null);
+  const [isLoadingHandicap, setIsLoadingHandicap] = useState<boolean>(false);
 
   // Check if the current user is the owner of this scorecard
   const isOwner = user?.uid === scorecard.userId;
+
+  // Load the user's current handicap index for comparison
+  useEffect(() => {
+    const loadUserHandicap = async () => {
+      if (scorecard.userId) {
+        setIsLoadingHandicap(true);
+        try {
+          const userRef = doc(db, 'users', scorecard.userId);
+          const userSnap = await getDoc(userRef);
+          
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            if (userData.handicapIndex !== undefined) {
+              setUserHandicapIndex(userData.handicapIndex);
+            }
+          }
+        } catch (error) {
+          console.error('Error loading user handicap:', error);
+        } finally {
+          setIsLoadingHandicap(false);
+        }
+      }
+    };
+    
+    loadUserHandicap();
+  }, [scorecard.userId]);
 
   // Format date
   const formattedDate = new Date(scorecard.date).toLocaleDateString(undefined, {
@@ -127,6 +157,49 @@ export function ScorecardSummary({ scorecard, showActions = true }: ScorecardSum
         {/* Summary Tab */}
         {activeTab === 'summary' && (
           <div className="space-y-6">
+            {/* Handicap Information - NEW SECTION */}
+            {(scorecard.courseHandicap !== null || userHandicapIndex !== null) && (
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-md mb-6">
+                <h3 className="text-sm font-medium mb-2">Handicap Information</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">
+                      Player's Handicap Index
+                    </div>
+                    <div className="flex items-center">
+                      {isLoadingHandicap ? (
+                        <div className="animate-pulse h-6 w-16 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                      ) : (
+                        <span className="text-lg font-bold">
+                          {userHandicapIndex !== null ? formatHandicapIndex(userHandicapIndex) : 'N/A'}
+                        </span>
+                      )}
+                      <span className="ml-2 text-xs text-gray-500">
+                        (USGA Handicap Index)
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Your portable measure of playing ability
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">
+                      Course Handicap for {scorecard.courseName}
+                    </div>
+                    <div className="text-lg font-bold">
+                      {scorecard.courseHandicap !== null ? scorecard.courseHandicap : 'N/A'}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Calculated for {scorecard.teeBox.name} tees (Slope: {scorecard.teeBox.slope}, Rating: {scorecard.teeBox.rating})
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  <p>Course Handicap is calculated using your Handicap Index adjusted for this specific course's characteristics.</p>
+                </div>
+              </div>
+            )}
+            
             {/* Score Summary */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <ScoreCard 

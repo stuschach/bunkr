@@ -559,13 +559,6 @@ export function RoundShareCard({
             onLike={onLike || (() => {})}
             onComment={handleCommentClick}
             onShare={onShare || (() => {})}
-            extraActions={
-              <Link href={`/scorecard/${round.id}`} passHref>
-                <Button variant="outline" size="sm">
-                  Full Scorecard
-                </Button>
-              </Link>
-            }
           />
 
           <CommentSection

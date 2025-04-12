@@ -21,7 +21,6 @@ import {
   orderBy,
   getDocs,
   getDoc,
-  Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -34,9 +33,10 @@ interface PostCardProps {
   onLike?: () => void;
   onComment?: () => void;
   onShare?: () => void;
+  extraActions?: React.ReactNode;
 }
 
-export function PostCard({ post, onLike, onComment, onShare }: PostCardProps) {
+export function PostCard({ post, onLike, onComment, onShare, extraActions }: PostCardProps) {
   const { user } = useAuth();
   const [showCommentInput, setShowCommentInput] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -237,7 +237,7 @@ export function PostCard({ post, onLike, onComment, onShare }: PostCardProps) {
         {post.postType === 'round' && post.roundId && (
           <div className="bg-gray-50 dark:bg-gray-800 rounded-md p-3 mb-4">
             <div className="text-sm font-medium mb-1">
-              Round at {post.location?.name}
+              Round at {post.location?.name || post.courseName}
             </div>
             <div className="text-xs text-gray-500 dark:text-gray-400">
               Click to see full scorecard
@@ -266,6 +266,7 @@ export function PostCard({ post, onLike, onComment, onShare }: PostCardProps) {
           onLike={onLike || (() => {})}
           onComment={handleCommentClick}
           onShare={onShare || (() => {})}
+          extraActions={extraActions}
         />
 
         <CommentSection

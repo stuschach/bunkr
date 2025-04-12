@@ -9,6 +9,7 @@ import { ThemeProvider } from '@/lib/contexts/ThemeContext';
 import { NotificationProvider } from '@/lib/contexts/NotificationContext';
 import { ResponsiveProvider } from '@/lib/contexts/ResponsiveContext';
 import { UserPreferencesProvider } from '@/lib/contexts/UserPreferencesContext';
+import { FollowProvider } from '@/lib/contexts/FollowContext';
 
 interface ApiProvidersProps {
   children: React.ReactNode;
@@ -23,11 +24,13 @@ export const ApiProviders: React.FC<ApiProvidersProps> = ({ children }) => {
       <AuthProvider>
         <ThemeProvider>
           <NotificationProvider>
-            <ResponsiveProvider>
-              <UserPreferencesProvider>
-                {children}
-              </UserPreferencesProvider>
-            </ResponsiveProvider>
+            <FollowProvider>
+              <ResponsiveProvider>
+                <UserPreferencesProvider>
+                  {children}
+                </UserPreferencesProvider>
+              </ResponsiveProvider>
+            </FollowProvider>
           </NotificationProvider>
         </ThemeProvider>
       </AuthProvider>

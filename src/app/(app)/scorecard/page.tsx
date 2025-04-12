@@ -1,33 +1,51 @@
-// src/app/scorecard/page.tsx
+// src/app/(app)/scorecard/page.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
 import { RoundHistory } from '@/components/scorecard/RoundHistory';
 import { HandicapHistory } from '@/components/handicap/HandicapHistory';
-import { HandicapChart } from '@/components/handicap/HandicapChart';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
+import { UserProfile } from '@/types/auth';
+import { Scorecard } from '@/types/scorecard';
+import { formatHandicapIndex, formatScoreWithRelationToPar } from '@/lib/utils/formatting';
+
+interface DashboardStats {
+  roundsPlayed: number;
+  averageScore: number | null;
+  bestRound: {
+    id: string;
+    score: number;
+    scoreToPar: number;
+    courseName: string;
+    date: string;
+    par: number;
+  } | null;
+  handicapIndex: number | null;
+  recentTrend: 'improving' | 'declining' | 'stable';
+}
 
 export default function ScorecardPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
-  const [dashboardStats, setDashboardStats] = useState({
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     roundsPlayed: 0,
-    averageScore: null as number | null,
-    bestRound: null as any,
-    handicapIndex: null as number | null,
-    recentTrend: 'stable' as 'improving' | 'declining' | 'stable',
+    averageScore: null,
+    bestRound: null,
+    handicapIndex: null,
+    recentTrend: 'stable',
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     if (loading) return;
@@ -36,10 +54,33 @@ export default function ScorecardPage() {
       return;
     }
 
-    // Load dashboard statistics
-    const loadDashboardStats = async () => {
+    // Load user profile and dashboard statistics
+    const loadData = async () => {
       try {
         setIsLoading(true);
+        
+        // First fetch user profile to get accurate handicap index
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        let userHandicapIndex = null;
+        
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          setUserProfile({
+            uid: userDocSnap.id,
+            email: userData.email || null,
+            displayName: userData.displayName || null,
+            photoURL: userData.photoURL || null,
+            createdAt: userData.createdAt || new Date(),
+            handicapIndex: userData.handicapIndex || null,
+            homeCourse: userData.homeCourse || null,
+            profileComplete: userData.profileComplete || false,
+            bio: userData.bio || null
+          });
+          
+          userHandicapIndex = userData.handicapIndex || null;
+        }
         
         // Query for the 20 most recent rounds
         const roundsQuery = query(
@@ -50,7 +91,10 @@ export default function ScorecardPage() {
         );
         
         const roundsSnapshot = await getDocs(roundsQuery);
-        const rounds = roundsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const rounds = roundsSnapshot.docs.map(doc => ({ 
+          id: doc.id, 
+          ...doc.data() 
+        })) as Scorecard[];
         
         if (rounds.length > 0) {
           // Calculate average score
@@ -58,7 +102,7 @@ export default function ScorecardPage() {
           const averageScore = parseFloat((totalScore / rounds.length).toFixed(1));
           
           // Find best round (lowest score to par)
-          const bestRound = rounds.reduce((best, round) => {
+          const bestRound = rounds.reduce<DashboardStats['bestRound']>((best, round) => {
             const scoreToPar = round.totalScore - round.coursePar;
             if (best === null || scoreToPar < best.scoreToPar) {
               return {
@@ -74,13 +118,14 @@ export default function ScorecardPage() {
           }, null);
           
           // Determine trend (for demo, we'll set randomly)
-          const trends = ['improving', 'declining', 'stable'];
-          const trend = trends[Math.floor(Math.random() * trends.length)] as 'improving' | 'declining' | 'stable';
+          const trends: DashboardStats['recentTrend'][] = ['improving', 'declining', 'stable'];
+          const trend = trends[Math.floor(Math.random() * trends.length)];
           
-          // Get handicap index (from user profile or calculate)
-          // In a real implementation, this would be fetched from the user's profile
-          // or calculated using the handicap calculation library
-          const handicapIndex = calculateApproximateHandicap(rounds);
+          // Use handicap index from user profile instead of calculating locally
+          // Only fall back to calculation if not available in profile
+          const handicapIndex = userHandicapIndex !== null ? 
+            userHandicapIndex : 
+            calculateApproximateHandicap(rounds);
           
           setDashboardStats({
             roundsPlayed: rounds.length,
@@ -97,18 +142,22 @@ export default function ScorecardPage() {
       }
     };
     
-    loadDashboardStats();
+    loadData();
   }, [user, loading, router]);
 
   // Simple approximate handicap calculation for demo
   // In production, use the proper handicap calculator
-  const calculateApproximateHandicap = (rounds: any[]) => {
+  const calculateApproximateHandicap = (rounds: Scorecard[]): number | null => {
     if (rounds.length < 3) return null;
     
     // Get differentials (score - course rating)
-    const differentials = rounds.map(round => 
-      (round.totalScore - round.teeBox.rating) * 113 / round.teeBox.slope
-    );
+    const differentials = rounds
+      .filter(round => round.teeBox?.rating !== undefined && round.teeBox?.slope !== undefined)
+      .map(round => 
+        (round.totalScore - (round.teeBox?.rating || 0)) * 113 / (round.teeBox?.slope || 113)
+      );
+    
+    if (differentials.length === 0) return null;
     
     // Sort from lowest to highest
     differentials.sort((a, b) => a - b);
@@ -178,17 +227,60 @@ export default function ScorecardPage() {
         </div>
       </div>
 
+      {/* Handicap Index Card - New Implementation */}
+      <div className="mb-6">
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row justify-between">
+              <div className="flex items-center mb-4 md:mb-0">
+                <div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Handicap Index</div>
+                  <div className="flex items-center">
+                    <div className="text-2xl font-bold">
+                      {dashboardStats.handicapIndex !== null ? formatHandicapIndex(dashboardStats.handicapIndex) : 'N/A'}
+                    </div>
+                    {dashboardStats.recentTrend !== 'stable' && (
+                      <Badge 
+                        variant={dashboardStats.recentTrend === 'improving' ? 'success' : 'error'} 
+                        className="ml-2"
+                      >
+                        {dashboardStats.recentTrend === 'improving' ? 'Improving' : 'Increasing'}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <div className="ml-6 pl-6 border-l border-gray-200 dark:border-gray-700">
+                  <Link href="/handicap/calculator" className="text-sm text-blue-500 hover:underline">
+                    Calculator
+                  </Link>
+                  <div className="h-2"></div>
+                  <Link href="/handicap/history" className="text-sm text-blue-500 hover:underline">
+                    History
+                  </Link>
+                </div>
+              </div>
+              
+              {dashboardStats.bestRound && (
+                <div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Best Round</div>
+                  <div className="text-xl font-bold">
+                    {formatScoreWithRelationToPar(
+                      dashboardStats.bestRound.score, 
+                      dashboardStats.bestRound.par
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {dashboardStats.bestRound.courseName}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <div>
-          <HandicapChart 
-            currentIndex={dashboardStats.handicapIndex} 
-            history={[]} // Would be populated with actual handicap history
-            trend={dashboardStats.recentTrend}
-            showDetails={false}
-          />
-        </div>
-        
         <div className="grid grid-cols-2 gap-4">
           <Card>
             <CardHeader className="pb-2">
@@ -231,6 +323,16 @@ export default function ScorecardPage() {
               )}
             </CardContent>
           </Card>
+        </div>
+
+        <div className="space-y-4">
+          <div className="text-sm font-medium">Recent Activity</div>
+          {/* You could add a list of recent rounds here or keep this space for future features */}
+          <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-md">
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Track your rounds consistently to see more detailed statistics and improve your game!
+            </div>
+          </div>
         </div>
       </div>
 

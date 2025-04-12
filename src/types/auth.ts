@@ -6,6 +6,7 @@ export interface UserProfile {
   email: string | null;
   displayName: string | null;
   photoURL: string | null;
+  coverPhotoURL?: string | null; // Added for cover photo functionality
   createdAt: Date | Timestamp;
   handicapIndex: number | null;
   homeCourse: string | null;

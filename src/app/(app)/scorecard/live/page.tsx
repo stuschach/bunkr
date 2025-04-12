@@ -16,7 +16,7 @@ import { TeeBox } from '@/types/scorecard';
 export default function LiveScoringPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
-  const [isSetupComplete, setIsSetupComplete] = useState(false);
+  const [isSetupComplete, setIsSetupComplete] = useState<boolean>(false);
   const [initialData, setInitialData] = useState<{
     courseId: string;
     courseName: string;
@@ -114,6 +114,7 @@ export default function LiveScoringPage() {
               <TeeSelector 
                 onTeeSelected={handleTeeSelected} 
                 initialTeeBox={initialData.teeBox}
+                courseId={initialData.courseId}
               />
             )}
             
@@ -136,7 +137,6 @@ export default function LiveScoringPage() {
       {initialData && (
         <LiveScorecard 
           initialData={initialData}
-          isLiveScoring={true}
         />
       )}
     </div>

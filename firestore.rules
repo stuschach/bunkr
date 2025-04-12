@@ -1,4 +1,3 @@
-// firestore.rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -57,14 +56,40 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
       
-      // User's connections (followers/following)
+      // User's connections (followers/following) - FIXED RULES
       match /connections/{connectionId} {
+        // Always allow reading connections if signed in
         allow read: if isSignedIn();
-        // Allow write if it's your own connection or if you're creating a follow relationship with this user
-        allow write: if isSignedIn() && (
+        
+        // CREATE rules - explicitly separated for clarity
+        allow create: if isSignedIn() && (
+          // Creating a connection in your own collection
           isOwner(userId) || 
-          (request.auth.uid == connectionId && 
-           (request.resource.data.type == 'follower' || request.resource.data.type == 'following'))
+          
+          // Creating a follower record in someone else's collection
+          (connectionId == ('follower_' + request.auth.uid) && 
+           request.resource.data.userId == request.auth.uid &&
+           request.resource.data.type == 'follower')
+        );
+        
+        // UPDATE rules
+        allow update: if isSignedIn() && (
+          // Updating your own connection
+          isOwner(userId) || 
+          
+          // Updating a follower record in someone else's collection
+          (connectionId == ('follower_' + request.auth.uid) &&
+           request.resource.data.userId == request.auth.uid &&
+           request.resource.data.type == 'follower')
+        );
+        
+        // DELETE rules
+        allow delete: if isSignedIn() && (
+          // Deleting from your own collection
+          isOwner(userId) || 
+          
+          // Deleting your follower record from someone else's collection
+          connectionId == ('follower_' + request.auth.uid)
         );
       }
       
@@ -84,6 +109,36 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow write: if isOwner(userId);
       }
+    }
+    
+    // Follow records collection - for tracking follow relationships
+    match /followRecords/{recordId} {
+      // Allow read if signed in
+      allow read: if isSignedIn();
+      
+      // Allow write if the record ID contains your user ID as the follower
+      allow write: if isSignedIn() && recordId.matches(request.auth.uid + '_.*');
+    }
+    
+    // Handicap records - UPDATED RULE
+    match /handicapRecords/{recordId} {
+      // Allow users to read their own handicap records
+      allow read: if isSignedIn() && (
+        // Either it's their own record (recordId starts with userId_)
+        recordId.matches(request.auth.uid + '_.*') ||
+        // OR it's a document containing their user ID in the userId field
+        resource.data.userId == request.auth.uid ||
+        // Or they're an admin
+        isAdmin()
+      );
+      
+      // For writes, maintain the stricter rule
+      allow write: if isSignedIn() && (
+        // Must be their own handicap record with proper ID format
+        recordId.matches(request.auth.uid + '_.*') ||
+        // Or they're an admin
+        isAdmin()
+      );
     }
     
     // Notifications
@@ -198,7 +253,19 @@ service cloud.firestore {
     // Golf courses (public data)
     match /courses/{courseId} {
       allow read: if isSignedIn();
-      allow create, update: if isAdmin();
+      
+      // NEW RULES: Allow any signed-in user to create a course
+      allow create: if isSignedIn() && 
+                     request.resource.data.createdBy == request.auth.uid &&
+                     request.resource.data.nameTokens is list;
+      
+      // Allow creators to update their own courses or admins to update any
+      allow update: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid || 
+        isAdmin()
+      );
+      
+      // Only admins can delete courses
       allow delete: if isAdmin();
       
       // Course reviews
@@ -206,6 +273,33 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
         allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      }
+      
+      // Course tee boxes - NEW SUBCOLLECTION
+      match /teeBoxes/{teeBoxId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && (
+          get(/databases/$(database)/documents/courses/$(courseId)).data.createdBy == request.auth.uid ||
+          isAdmin()
+        );
+        allow update: if isSignedIn() && (
+          get(/databases/$(database)/documents/courses/$(courseId)).data.createdBy == request.auth.uid ||
+          isAdmin()
+        );
+        allow delete: if isSignedIn() && (
+          get(/databases/$(database)/documents/courses/$(courseId)).data.createdBy == request.auth.uid ||
+          isAdmin()
+        );
+      }
+      
+      // Course holes data - NEW SUBCOLLECTION
+      match /holes/{holeId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && (
+          get(/databases/$(database)/documents/courses/$(courseId)).data.createdBy == request.auth.uid ||
+          isAdmin()
+        );
+        allow delete: if isAdmin();
       }
     }
     

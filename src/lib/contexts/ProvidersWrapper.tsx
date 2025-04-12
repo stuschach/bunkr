@@ -8,8 +8,6 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/config';
 import { UserProfile } from '@/types/auth';
-import { AuthProvider } from './AuthContext';
-import { NotificationProvider } from './NotificationContext';
 import { SnackbarProvider } from '@/components/common/feedback/Snackbar';
 
 export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({ 
@@ -165,14 +163,10 @@ export const ProvidersWrapper: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   return (
-    <AuthProvider>
-      <NotificationProvider>
-        <SnackbarProvider>
-          <ApiProviders>
-            {children}
-          </ApiProviders>
-        </SnackbarProvider>
-      </NotificationProvider>
-    </AuthProvider>
+    <SnackbarProvider>
+      <ApiProviders>
+        {children}
+      </ApiProviders>
+    </SnackbarProvider>
   );
 };

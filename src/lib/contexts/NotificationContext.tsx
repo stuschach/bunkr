@@ -10,7 +10,12 @@ import {
   deleteNotification as deleteNotificationService,
   subscribeToNotifications
 } from '@/lib/services/notifications-service';
-import { Notification, NotificationContextType, NotificationPreferences } from '@/types/notification';
+import { 
+  Notification, 
+  NotificationContextType, 
+  NotificationPreferences,
+  ToastNotificationData
+} from '@/types/notification';
 
 // Set default context with proper typing
 const defaultContext: NotificationContextType = {
@@ -25,7 +30,8 @@ const defaultContext: NotificationContextType = {
   notificationPreferences: null,
   updateNotificationPreferences: async (preferences: Partial<NotificationPreferences>) => {},
   hasNewNotifications: false,
-  clearNewNotificationsFlag: () => {}
+  clearNewNotificationsFlag: () => {},
+  showNotification: () => {} // Add default implementation
 };
 
 // Create context with explicit typing
@@ -40,6 +46,10 @@ export const NotificationProvider: React.FC<{children: ReactNode}> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
   const [hasNewNotifications, setHasNewNotifications] = useState(false);
+  
+  // Add toast state
+  const [toast, setToast] = useState<(ToastNotificationData & { visible: boolean }) | null>(null);
+  const [toastTimeoutId, setToastTimeoutId] = useState<NodeJS.Timeout | null>(null);
   
   // Fetch notifications on user change
   useEffect(() => {
@@ -246,6 +256,33 @@ export const NotificationProvider: React.FC<{children: ReactNode}> = ({ children
     setHasNewNotifications(false);
   };
   
+  // Add the showNotification function for toast notifications
+  const showNotification = (data: ToastNotificationData) => {
+    // Clear any existing timeout
+    if (toastTimeoutId) {
+      clearTimeout(toastTimeoutId);
+      setToastTimeoutId(null);
+    }
+    
+    // Show the toast
+    setToast({
+      ...data,
+      visible: true
+    });
+    
+    // Auto-hide after duration
+    const timeoutId = setTimeout(() => {
+      setToast(prev => prev ? { ...prev, visible: false } : null);
+      
+      // Remove from DOM after animation
+      setTimeout(() => {
+        setToast(null);
+      }, 300); // Animation duration
+    }, data.duration || 5000);
+    
+    setToastTimeoutId(timeoutId);
+  };
+  
   return (
     <NotificationContext.Provider
       value={{
@@ -260,10 +297,42 @@ export const NotificationProvider: React.FC<{children: ReactNode}> = ({ children
         notificationPreferences,
         updateNotificationPreferences,
         hasNewNotifications,
-        clearNewNotificationsFlag
+        clearNewNotificationsFlag,
+        showNotification // Add the new function
       }}
     >
       {children}
+      
+      {/* Toast UI component */}
+      {toast && (
+        <div className={`fixed bottom-4 right-4 z-50 transition-opacity duration-300 ${
+          toast.visible ? 'opacity-100' : 'opacity-0'
+        }`}>
+          <div className={`p-4 rounded-lg shadow-lg max-w-md ${
+            toast.type === 'success' ? 'bg-green-100 border-l-4 border-green-500 text-green-700' :
+            toast.type === 'error' ? 'bg-red-100 border-l-4 border-red-500 text-red-700' :
+            toast.type === 'warning' ? 'bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700' :
+            'bg-blue-100 border-l-4 border-blue-500 text-blue-700'
+          }`}>
+            <div className="flex items-start">
+              <div className="flex-1">
+                <h3 className="font-medium">{toast.title}</h3>
+                {toast.description && (
+                  <p className="text-sm mt-1">{toast.description}</p>
+                )}
+              </div>
+              <button 
+                onClick={() => setToast(prev => prev ? { ...prev, visible: false } : null)}
+                className="ml-4 text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </NotificationContext.Provider>
   );
 };

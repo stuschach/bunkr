@@ -12,6 +12,9 @@ interface ProfileTabsProps {
   posts: Post[];
   rounds: Scorecard[];
   isLoading?: boolean;
+  onLike?: (postId: string) => void;
+  onComment?: (postId: string) => void;
+  onShare?: (postId: string) => void;
 }
 
 export function ProfileTabs({
@@ -19,6 +22,9 @@ export function ProfileTabs({
   posts,
   rounds,
   isLoading = false,
+  onLike,
+  onComment,
+  onShare,
 }: ProfileTabsProps) {
   const postsContent = (
     <div className="space-y-4">
@@ -31,7 +37,13 @@ export function ProfileTabs({
         </div>
       ) : posts.length > 0 ? (
         posts.map((post) => (
-          <PostCard key={post.id} post={post} />
+          <PostCard 
+            key={post.id} 
+            post={post} 
+            onLike={onLike ? () => onLike(post.id) : undefined}
+            onComment={onComment ? () => onComment(post.id) : undefined}
+            onShare={onShare ? () => onShare(post.id) : undefined}
+          />
         ))
       ) : (
         <div className="text-center py-8 text-gray-500 dark:text-gray-400">

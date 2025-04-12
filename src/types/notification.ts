@@ -61,6 +61,14 @@ export interface NotificationPreferences {
   };
 }
 
+// Interface for toast notifications
+export interface ToastNotificationData {
+  type: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  description?: string;
+  duration?: number;
+}
+
 export interface NotificationContextType {
   notifications: Notification[];
   unreadCount: number;
@@ -75,4 +83,6 @@ export interface NotificationContextType {
   updateNotificationPreferences: (preferences: Partial<NotificationPreferences>) => Promise<void>;
   hasNewNotifications: boolean;
   clearNewNotificationsFlag: () => void;
+  // Toast notification method
+  showNotification: (data: ToastNotificationData) => void;
 }

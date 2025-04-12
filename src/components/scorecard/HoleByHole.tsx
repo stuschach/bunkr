@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { HoleData } from '@/types/scorecard';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { formatScoreWithRelationToPar } from '@/lib/utils/formatting';
 import { HoleInput } from './HoleInput';
 
@@ -13,13 +14,15 @@ interface HoleByHoleProps {
   updateHoleData: (holeNumber: number, data: Partial<HoleData>) => void;
   coursePar: number;
   readonly?: boolean;
+  isLoadingCourseData?: boolean;
 }
 
 export function HoleByHole({ 
   holes, 
   updateHoleData, 
   coursePar,
-  readonly = false
+  readonly = false,
+  isLoadingCourseData = false
 }: HoleByHoleProps) {
   const [currentPage, setCurrentPage] = useState<'front9' | 'back9'>('front9');
   const [expandedHole, setExpandedHole] = useState<number | null>(null);
@@ -57,6 +60,13 @@ export function HoleByHole({
 
   return (
     <div>
+      {isLoadingCourseData && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md text-blue-700 dark:text-blue-300 flex items-center space-x-2 mb-4">
+          <LoadingSpinner size="sm" color="primary" />
+          <span>Loading hole information from course data...</span>
+        </div>
+      )}
+      
       {/* Page toggle for Front 9 / Back 9 */}
       <div className="flex mb-4">
         <Button
@@ -118,7 +128,6 @@ export function HoleByHole({
                           value={hole.par}
                           onChange={(e) => updateHoleData(actualHoleNumber, { par: parseInt(e.target.value) })}
                           className="w-16 rounded-md border border-gray-300 bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-green-500 dark:border-gray-700"
-                          disabled={readonly}
                         >
                           {[3, 4, 5, 6].map((parValue) => (
                             <option key={parValue} value={parValue}>
@@ -146,7 +155,6 @@ export function HoleByHole({
                           className={`w-16 rounded-md border border-gray-300 bg-transparent px-3 py-1 text-sm text-center focus:outline-none focus:ring-1 focus:ring-green-500 dark:border-gray-700 ${
                             hole.score ? getScoreColor(hole.score, hole.par) : ''
                           }`}
-                          disabled={readonly}
                         />
                       )}
                     </td>
@@ -205,7 +213,7 @@ export function HoleByHole({
       <div className="mt-6 flex flex-col items-center">
         <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Score</div>
         <div className="text-3xl font-bold text-center mb-1">
-          {formatScoreWithRelationToPar(totalScore, coursePar)}
+          {formatScoreWithRelationToPar(totalScore, totalPar)}
         </div>
         <div className="flex space-x-2 mt-2">
           {totalScore > 0 && holes.some(h => h.score > 0) && (
@@ -220,6 +228,79 @@ export function HoleByHole({
           )}
         </div>
       </div>
+      
+      {/* Quick Par Setup */}
+      {!readonly && (
+        <div className="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+          <h3 className="text-sm font-medium mb-2">Quick Par Setup</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Set all par 4
+                const updatedHoles = [...holes];
+                updatedHoles.forEach(hole => {
+                  updateHoleData(hole.number, { par: 4 });
+                });
+              }}
+            >
+              All Par 4
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Standard course - 4 par 3s, 4 par 5s, rest par 4s
+                [2, 7, 11, 16].forEach(holeNum => {
+                  updateHoleData(holeNum, { par: 3 });
+                });
+                
+                [4, 9, 13, 18].forEach(holeNum => {
+                  updateHoleData(holeNum, { par: 5 });
+                });
+                
+                // Set remaining holes to par 4
+                holes.forEach(hole => {
+                  if (![2, 4, 7, 9, 11, 13, 16, 18].includes(hole.number)) {
+                    updateHoleData(hole.number, { par: 4 });
+                  }
+                });
+              }}
+            >
+              Standard Layout
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Front 9 setup
+                [1, 2, 3, 4, 5, 6, 7, 8, 9].forEach((holeNum, idx) => {
+                  updateHoleData(holeNum, { par: currentPage === 'front9' ? 4 : holes[idx].par });
+                });
+              }}
+            >
+              Front 9 All Par 4
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Back 9 setup
+                [10, 11, 12, 13, 14, 15, 16, 17, 18].forEach((holeNum, idx) => {
+                  updateHoleData(holeNum, { par: currentPage === 'back9' ? 4 : holes[idx + 9].par });
+                });
+              }}
+            >
+              Back 9 All Par 4
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
