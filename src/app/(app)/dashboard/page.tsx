@@ -1,4 +1,4 @@
-// src/app/(app)/page.tsx or src/pages/dashboard.tsx (depending on your routing)
+// src/app/(app)/dashboard/page.tsx
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -38,7 +38,7 @@ export default function DashboardPage() {
   // Use the feed items hook for activity feed
   const { 
     posts: activityFeed,
-    initialLoading: feedLoading,
+    isLoadingInitial: feedLoading,
     error: feedError
   } = useFeed({ pageSize: 5 });
   

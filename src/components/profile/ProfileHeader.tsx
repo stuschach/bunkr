@@ -1,7 +1,7 @@
 // src/components/profile/ProfileHeader.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/config';
@@ -26,7 +26,8 @@ interface ProfileHeaderProps {
   onFollowerCountChange?: (count: number) => void;
 }
 
-export function ProfileHeader({
+// Use memo to prevent unnecessary re-renders
+export const ProfileHeader = memo(function ProfileHeader({
   profile,
   isOwnProfile,
   onFollowChange,
@@ -55,8 +56,8 @@ export function ProfileHeader({
   const followingCount = profile?.uid ? getFollowingCount(profile.uid) : 0;
   const userIsFollowing = profile?.uid ? isFollowing(profile.uid) : false;
   
-  // Get user's achievements based on handicap and rounds played
-  const getUserAchievements = () => {
+  // Memoize expensive computations
+  const getUserAchievements = useCallback(() => {
     const achievements = [];
     
     // Handicap-based achievements
@@ -78,11 +79,13 @@ export function ProfileHeader({
     }
     
     return achievements;
-  };
+  }, [profile.handicapIndex, followerCount]);
 
-  const achievements = getUserAchievements();
+  // Memoize the achievements calculation
+  const achievements = useMemo(() => getUserAchievements(), [getUserAchievements]);
 
-  const handleImageUploaded = async (url: string) => {
+  // Handle image uploads with useCallback
+  const handleImageUploaded = useCallback(async (url: string) => {
     try {
       // Update user document in Firestore
       if (auth.currentUser) {
@@ -112,9 +115,9 @@ export function ProfileHeader({
         description: 'Failed to update profile. Please try again.'
       });
     }
-  };
+  }, [showNotification, router]);
 
-  const handleCoverPhotoUploaded = async (url: string) => {
+  const handleCoverPhotoUploaded = useCallback(async (url: string) => {
     try {
       // Update user document in Firestore
       if (auth.currentUser) {
@@ -144,19 +147,19 @@ export function ProfileHeader({
         description: 'Failed to update cover photo. Please try again.'
       });
     }
-  };
+  }, [showNotification, router]);
 
   // Handle follower count changes
-  const handleFollowerCountChange = (newCount: number) => {
+  const handleFollowerCountChange = useCallback((newCount: number) => {
     console.log(`[ProfileHeader] Follower count changed to: ${newCount}`);
     
     // Notify parent component
     if (onFollowerCountChange) {
       onFollowerCountChange(newCount);
     }
-  };
+  }, [onFollowerCountChange]);
 
-  const handleOpenChat = async () => {
+  const handleOpenChat = useCallback(async () => {
     if (!auth.currentUser) {
       showNotification({
         type: 'info',
@@ -181,21 +184,23 @@ export function ProfileHeader({
     } finally {
       setIsMessaging(false);
     }
-  };
+  }, [profile.uid, getOrCreateChat, router, showNotification]);
 
-  const handleQuickMessage = () => {
+  const handleQuickMessage = useCallback(() => {
     setIsQuickMessageOpen(true);
-  };
+  }, []);
 
   return (
     <div className="w-full bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden mb-6">
-      {/* Cover Photo Area */}
+      {/* Cover Photo Area with optimized image loading */}
       <div className="h-32 md:h-48 bg-gradient-to-r from-green-400 to-blue-500 relative">
         {profile.coverPhotoURL && (
           <img 
             src={profile.coverPhotoURL} 
             alt="Cover photo" 
             className="w-full h-full object-cover"
+            loading="lazy" 
+            sizes="(max-width: 768px) 100vw, 768px"
           />
         )}
         {isOwnProfile && (
@@ -236,6 +241,7 @@ export function ProfileHeader({
                 alt={profile.displayName || 'User'} 
                 size="xl"
                 className="h-28 w-28 md:h-36 md:w-36 border-4 border-white dark:border-gray-800 shadow-lg" 
+                loading="lazy"
               />
               {isOwnProfile && (
                 <Button
@@ -481,4 +487,4 @@ export function ProfileHeader({
       />
     </div>
   );
-}
+});
