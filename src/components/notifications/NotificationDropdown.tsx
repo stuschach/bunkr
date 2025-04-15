@@ -113,22 +113,20 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
 
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      
+      // Auto mark all as read when dropdown opens
+      markAllAsRead();
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, markAllAsRead]);
 
   // Handle "View All" click
   const handleViewAll = () => {
     router.push('/notifications');
     onClose();
-  };
-
-  // Handle "Mark All as Read" click
-  const handleMarkAllAsRead = async () => {
-    await markAllAsRead();
   };
   
   // Handle category change
@@ -145,14 +143,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
     >
       <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
         <h3 className="font-medium text-lg">Notifications</h3>
-        {unreadCount > 0 && (
-          <button
-            onClick={handleMarkAllAsRead}
-            className="text-xs text-green-500 hover:text-green-600 font-medium"
-          >
-            Mark all as read
-          </button>
-        )}
+        {/* Removed the "Mark all as read" button since it's now automatic */}
       </div>
       
       {/* Category tabs */}

@@ -4,8 +4,14 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { formatMessageTime } from '@/lib/utils/message-utils';
 import { safeTimestampToDate } from '@/lib/utils/timestamp-utils';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
+import { Chat } from '@/types/messages';
+import { UserProfile } from '@/types/auth';
 
-const ChatList = ({ onChatSelect }) => {
+interface ChatListProps {
+  onChatSelect: (chatId: string | null) => void;
+}
+
+const ChatList: React.FC<ChatListProps> = ({ onChatSelect }) => {
   const { user } = useAuth();
   const { 
     chats, 
@@ -15,7 +21,7 @@ const ChatList = ({ onChatSelect }) => {
     unreadCounts
   } = useMessages();
   
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   
   // Filter chats based on search query
   const filteredChats = chats.filter(chat => {
@@ -33,14 +39,14 @@ const ChatList = ({ onChatSelect }) => {
   });
   
   // Format time helper using the safe timestamp conversion
-  const formatTime = (timestamp) => {
+  const formatTime = (timestamp: any): string => {
     if (!timestamp) return '';
     
     const date = safeTimestampToDate(timestamp);
     if (!date) return '';
     
     const now = new Date();
-    const diffInHours = (now - date) / (1000 * 60 * 60);
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
     
     if (diffInHours < 24) {
       // Today - show time
@@ -62,7 +68,7 @@ const ChatList = ({ onChatSelect }) => {
   };
   
   // Handle chat selection
-  const handleChatClick = (chatId) => {
+  const handleChatClick = (chatId: string): void => {
     if (onChatSelect) {
       onChatSelect(chatId);
     }

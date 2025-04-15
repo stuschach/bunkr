@@ -24,5 +24,14 @@ export {
   onUserDeleted
 } from './messaging.function';
 
+// Export notification functions
+export {
+  cleanupOldNotifications,
+  onUserDeleted as onUserDeletedNotifications,
+  onPostDeleted as onPostDeletedNotifications,
+  onNotificationCreated,
+  updateNotificationMetrics
+} from './notification.functions';
+
 // Log initialization
 logger.info('Firebase Functions initialized');

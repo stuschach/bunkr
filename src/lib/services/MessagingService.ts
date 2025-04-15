@@ -520,6 +520,7 @@ export class MessagingService {
       // Sort by timestamp - oldest first for consistent UI rendering
       messages.sort((a, b) => {
         try {
+          // Handle Timestamp objects (use toMillis) since getTime doesn't exist on Timestamp
           const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
           const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
           return aTime - bTime;
@@ -551,7 +552,7 @@ export class MessagingService {
     const subscriptionId = generateSubscriptionId(chatId, userId);
     
     // Clean up any existing subscription for this chat
-    this.unsubscribeFromChat(chatId);
+    this.unsubscribeFromChat(subscriptionId);
     
     try {
       // Set up the subscription
@@ -585,6 +586,7 @@ export class MessagingService {
               // Sort by timestamp
               messages.sort((a, b) => {
                 try {
+                  // Handle Timestamp objects (use toMillis) since getTime doesn't exist on Timestamp
                   const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
                   const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
                   return aTime - bTime;
@@ -637,6 +639,248 @@ export class MessagingService {
   }
   
   /**
+   * Enhanced sendMessage with better error handling and recovery
+   */
+  public async sendMessage(chatId: string, content: string): Promise<Message> {
+    const userId = this.checkAuthentication();
+    
+    if (!content.trim()) {
+      throw new Error('Message cannot be empty');
+    }
+    
+    // Create a unique message ID to track this send attempt
+    const clientMessageId = `${chatId}_${userId}_${Date.now()}`;
+    
+    try {
+      // Store pending message in local storage for recovery
+      this.storePendingMessage(clientMessageId, chatId, content);
+      
+      // Call the cloud function to send the message with exponential backoff
+      const functions = getFunctions();
+      const sendMessageFn = httpsCallable(functions, 'sendMessage');
+      
+      let attempts = 0;
+      const maxAttempts = 3;
+      let lastError: any = null;
+      
+      while (attempts < maxAttempts) {
+        try {
+          const result = await sendMessageFn({ 
+            chatId, 
+            content,
+            clientMessageId // Include for deduplication
+          });
+          
+          const response = result.data as any;
+          
+          if (!response.success) {
+            throw new Error(response.message || 'Failed to send message');
+          }
+          
+          // Create a message object to return
+          const message: Message = {
+            id: response.messageId,
+            chatId,
+            senderId: userId,
+            content: content.trim(),
+            createdAt: Timestamp.now(),
+            readBy: { [userId]: true }
+          };
+          
+          // Remove from pending messages since it succeeded
+          this.removePendingMessage(clientMessageId);
+          
+          // Update caches
+          await this.updateChatAfterMessageSent(chatId, message);
+          
+          return message;
+        } catch (err) {
+          lastError = err;
+          attempts++;
+          
+          // Check if retryable error
+          if (this.isRetryableError(err)) {
+            // Exponential backoff
+            const delayMs = Math.min(1000 * Math.pow(2, attempts - 1), 10000);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          } else {
+            // Non-retryable error, break the loop
+            break;
+          }
+        }
+      }
+      
+      // If we got here, all attempts failed
+      if (lastError) {
+        // Keep the pending message for potential future recovery
+        if (this.isRetryableError(lastError)) {
+          console.warn('Message send failed but saved for retry', { clientMessageId, chatId });
+        } else {
+          // For non-retryable errors, remove the pending message
+          this.removePendingMessage(clientMessageId);
+        }
+        
+        throw lastError;
+      }
+      
+      throw new Error('Failed to send message after multiple attempts');
+    } catch (error: any) {
+      console.error('Error sending message:', error);
+      
+      // Provide more specific error message based on the error type
+      if (error.code === 'permission-denied') {
+        throw new PermissionError('You do not have permission to send messages in this chat');
+      } else if (error.code === 'not-found') {
+        throw new NotFoundError('Chat not found');
+      } else if (error.code === 'resource-exhausted') {
+        throw new Error('Service is temporarily unavailable. Please try again later.');
+      } else if (error.code === 'deadline-exceeded') {
+        throw new Error('Request timed out. Please check your connection and try again.');
+      } else if (error.code === 'unavailable') {
+        throw new Error('Service is currently unavailable. Please try again later.');
+      }
+      
+      throw new Error('Failed to send message: ' + (error.message || 'Unknown error'));
+    }
+  }
+  
+  /**
+   * Determine if an error should be retried
+   */
+  private isRetryableError(error: any): boolean {
+    // NetworkError, timeout, or server errors (500+) should be retried
+    if (!error) return false;
+    
+    const retryableCodes = [
+      'unavailable',
+      'deadline-exceeded',
+      'resource-exhausted',
+      'internal',
+      'cancelled'
+    ];
+    
+    return (
+      error.code && retryableCodes.includes(error.code) ||
+      error.name === 'NetworkError' ||
+      error.name === 'TimeoutError' ||
+      (error.httpErrorCode && error.httpErrorCode >= 500)
+    );
+  }
+  
+  /**
+   * Store a pending message in local storage for potential recovery
+   */
+  private storePendingMessage(id: string, chatId: string, content: string): void {
+    if (typeof window === 'undefined') return;
+    
+    try {
+      const pendingMessages = this.getPendingMessages();
+      pendingMessages[id] = {
+        chatId,
+        content,
+        timestamp: Date.now(),
+        attempts: 0
+      };
+      
+      localStorage.setItem('bunkr_pending_messages', JSON.stringify(pendingMessages));
+    } catch (e) {
+      console.warn('Failed to store pending message', e);
+    }
+  }
+  
+  /**
+   * Remove a pending message from local storage
+   */
+  private removePendingMessage(id: string): void {
+    if (typeof window === 'undefined') return;
+    
+    try {
+      const pendingMessages = this.getPendingMessages();
+      if (pendingMessages[id]) {
+        delete pendingMessages[id];
+        localStorage.setItem('bunkr_pending_messages', JSON.stringify(pendingMessages));
+      }
+    } catch (e) {
+      console.warn('Failed to remove pending message', e);
+    }
+  }
+  
+  /**
+   * Get all pending messages from local storage
+   */
+  private getPendingMessages(): Record<string, any> {
+    if (typeof window === 'undefined') return {};
+    
+    try {
+      const data = localStorage.getItem('bunkr_pending_messages');
+      return data ? JSON.parse(data) : {};
+    } catch (e) {
+      console.warn('Failed to get pending messages', e);
+      return {};
+    }
+  }
+  
+  /**
+   * Attempt to retry sending all pending messages
+   * Call this method when the app starts or when connectivity is restored
+   */
+  public async retryPendingMessages(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    
+    try {
+      // Check if we're authenticated
+      if (!auth.currentUser) return;
+      
+      const pendingMessages = this.getPendingMessages();
+      const pendingIds = Object.keys(pendingMessages);
+      
+      if (pendingIds.length === 0) return;
+      
+      console.log(`Attempting to retry ${pendingIds.length} pending messages`);
+      
+      // Process in series to avoid overwhelming the server
+      for (const id of pendingIds) {
+        const message = pendingMessages[id];
+        
+        // Skip messages older than 24 hours
+        if (Date.now() - message.timestamp > 24 * 60 * 60 * 1000) {
+          this.removePendingMessage(id);
+          continue;
+        }
+        
+        // Skip messages that have been attempted too many times
+        if (message.attempts >= 5) {
+          this.removePendingMessage(id);
+          continue;
+        }
+        
+        try {
+          // Increment attempt counter
+          message.attempts++;
+          localStorage.setItem('bunkr_pending_messages', JSON.stringify(pendingMessages));
+          
+          // Try to send the message
+          await this.sendMessage(message.chatId, message.content);
+          
+          // If successful, the message will be removed in sendMessage
+        } catch (error) {
+          console.warn(`Failed to retry message ${id}:`, error);
+          
+          // Non-retryable errors should remove the message
+          if (!this.isRetryableError(error)) {
+            this.removePendingMessage(id);
+          }
+        }
+        
+        // Wait a bit between retries
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    } catch (e) {
+      console.error('Error retrying pending messages:', e);
+    }
+  }
+  
+  /**
    * Unsubscribe from a specific chat subscription
    */
   private unsubscribeFromChat(subscriptionId: string): void {
@@ -657,48 +901,6 @@ export class MessagingService {
     });
     
     this.activeSubscriptions.clear();
-  }
-  
-  /**
-   * Send a message with optimistic updates
-   */
-  public async sendMessage(chatId: string, content: string): Promise<Message> {
-    const userId = this.checkAuthentication();
-    
-    if (!content.trim()) {
-      throw new Error('Message cannot be empty');
-    }
-    
-    try {
-      // Call the cloud function to send the message
-      const functions = getFunctions();
-      const sendMessageFn = httpsCallable(functions, 'sendMessage');
-      const result = await sendMessageFn({ chatId, content });
-      
-      const response = result.data as any;
-      
-      if (!response.success) {
-        throw new Error('Failed to send message');
-      }
-      
-      // Create a message object to return
-      const message: Message = {
-        id: response.messageId,
-        chatId,
-        senderId: userId,
-        content: content.trim(),
-        createdAt: Timestamp.now(),
-        readBy: { [userId]: true }
-      };
-      
-      // Update caches
-      await this.updateChatAfterMessageSent(chatId, message);
-      
-      return message;
-    } catch (error) {
-      console.error('Error sending message:', error);
-      throw new Error('Failed to send message');
-    }
   }
   
   /**
@@ -886,10 +1088,10 @@ export class MessagingService {
         if (chatDoc.exists()) {
           const chatData = chatDoc.data();
           
-          // If this message was the last message, update the last message field
+          // If this message was the last message, update the preview
           if (chatData.lastMessage && 
               chatData.lastMessage.senderId === userId &&
-              messageId === chatData.lastMessage.messageId) {
+              chatData.lastMessage.messageId === messageId) {
             
             await updateDoc(chatRef, {
               'lastMessage.content': DELETED_MESSAGE_TEXT

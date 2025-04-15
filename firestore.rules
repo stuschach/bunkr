@@ -121,10 +121,29 @@ service cloud.firestore {
       
       allow update: if isSignedIn() && (
         isOwner(userId) || 
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadNotifications', 'notificationPreferences', 'followerCount', 'followingCount', 'displayNameLower'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'unreadNotifications', 'notificationPreferences', 'followerCount', 
+          'followingCount', 'displayNameLower', 'fcmTokens'
+        ])
       );
       
       allow delete: if isAdmin();
+      
+      // User's notification settings
+      match /settings/notifications {
+        allow read: if isSignedIn() && isOwner(userId);
+        allow write: if isSignedIn() && isOwner(userId);
+      }
+      
+      // User's notification metrics
+      match /metrics/notifications {
+        allow read: if isSignedIn() && isOwner(userId);
+        allow update: if isSignedIn() && (
+          isOwner(userId) || 
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['totalCount', 'typeCount', 'lastUpdated'])
+        );
+      }
       
       // User's rounds/scorecards
       match /rounds/{roundId} {
@@ -138,19 +157,28 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
       
-      // User's connections (followers/following)
+      // UPDATED: User's connections (followers/following) with proper ID format handling
       match /connections/{connectionId} {
         allow read: if isSignedIn();
         
         allow create: if isSignedIn() && (
-          isOwner(userId) || 
-          (connectionId == ('follower_' + request.auth.uid) && 
+          // User can create their own following connections 
+          (isOwner(userId) && 
+           connectionId.matches('following_.*') && 
+           request.resource.data.type == 'following' &&
+           request.resource.data.userId == connectionId.split('_')[1]) ||
+          
+          // User can create follower connections in another user's document
+          (!isOwner(userId) && 
+           connectionId == ('follower_' + request.auth.uid) &&
            request.resource.data.userId == request.auth.uid &&
            request.resource.data.type == 'follower')
         );
         
         allow update: if isSignedIn() && (
+          // Owner can update their own connections
           isOwner(userId) || 
+          // User can update their follower connection in another user's document
           (connectionId == ('follower_' + request.auth.uid) &&
            request.resource.data.userId == request.auth.uid &&
            request.resource.data.type == 'follower')
@@ -211,26 +239,54 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
     
-    // Notifications
+    // Notifications - UPDATED SECTION
     match /notifications/{notificationId} {
+      // Helper function to check if notification type is a valid system type
+      function isValidSystemNotification(type) {
+        return type == 'handicap-updated' || 
+               type == 'tournament-update' || 
+               type == 'friend-activity' || 
+               type == 'course-review' ||
+               type == 'tee-time-approved' ||
+               type == 'tee-time-cancelled';
+      }
+      
+      // Read: Only the recipient can read their notifications
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
       
+      // Create: Actor can create, or system can create for specific types
       allow create: if isSignedIn() && (
+        // User creating a notification where they are the actor
         (request.resource.data.actorId == request.auth.uid) ||
+        
+        // System notifications (with validation of types)
         (request.resource.data.actorId == 'system' && 
-         (request.resource.data.type == 'handicap-updated' || 
-          request.resource.data.type == 'tournament-update' || 
-          request.resource.data.type == 'friend-activity' || 
-          request.resource.data.type == 'course-review'))
+         isValidSystemNotification(request.resource.data.type))
       );
       
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      // Update: Recipient can update (mark as read)
+      allow update: if isSignedIn() && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['isRead']);
       
+      // Delete: Recipient can delete their notifications
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
       
-      allow delete: if isSignedIn() && 
-                     resource.data.entityType == 'post' && 
-                     !exists(/databases/$(database)/documents/posts/$(resource.data.entityId));
+      // Delete: Anyone can delete notifications for deleted content
+      allow delete: if isSignedIn() && (
+        // For deleted posts
+        (resource.data.entityType == 'post' && 
+         !exists(/databases/$(database)/documents/posts/$(resource.data.entityId))) ||
+        
+        // For deleted tee times
+        (resource.data.entityType == 'tee-time' && 
+         !exists(/databases/$(database)/documents/teeTimes/$(resource.data.entityId))) ||
+         
+        // For deleted rounds
+        (resource.data.entityType == 'round' && 
+         !exists(/databases/$(database)/documents/scorecards/$(resource.data.entityId)))
+      );
     }
     
     // Tournaments

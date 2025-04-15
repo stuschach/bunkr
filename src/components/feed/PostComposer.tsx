@@ -7,7 +7,7 @@ import { storage } from '@/lib/firebase/config';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Avatar } from '@/components/ui/Avatar';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext'; // CORRECTED: Changed from useNotification to useNotifications
 import { Media } from '@/types/post';
 import { UserProfile } from '@/types/auth';
 import { usePostCreation } from '@/lib/hooks/usePostCreation';
@@ -22,7 +22,7 @@ export function PostComposer({ user, onPostCreated }: PostComposerProps) {
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [mediaPreviewUrls, setMediaPreviewUrls] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications(); // CORRECTED: Changed from useNotification to useNotifications
   const { createPost, isCreating } = usePostCreation();
 
   // Handle text change
@@ -101,7 +101,13 @@ export function PostComposer({ user, onPostCreated }: PostComposerProps) {
         content: postText,
         media: mediaItems,
         visibility: 'public',
-        hashtags
+        hashtags,
+        location: undefined,
+        roundId: undefined,
+        teeTimeId: undefined,
+        courseName: undefined,
+        dateTime: undefined,
+        maxPlayers: undefined
       }, 'regular');
 
       // Reset form

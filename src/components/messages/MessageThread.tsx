@@ -1,6 +1,5 @@
-'use client';
-
-import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+// src/components/messages/MessageThread.tsx - Instagram-Style Implementation
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils/cn';
 import { formatMessageDateDivider } from '@/lib/utils/message-utils';
@@ -8,9 +7,47 @@ import { useMessages } from '@/lib/contexts/MessagesContext';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { safeTimestampToDate } from '@/lib/utils/timestamp-utils';
+import { Message } from '@/types/messages';
 
-// Import the MessageBubble component
-const MessageBubble = ({ 
+// Types and interfaces
+interface MessageBubbleProps {
+  message: Message;
+  isCurrentUser: boolean;
+  sender: {
+    uid: string;
+    displayName: string | null;
+    photoURL: string | null;
+    handicapIndex?: number | null;
+  };
+  showAvatar?: boolean;
+  isFirstInGroup?: boolean;
+  isLastInGroup?: boolean;
+  onDelete?: (messageId: string) => void;
+}
+
+interface DateDivider {
+  isDateDivider: true;
+  date: Date;
+  key: string;
+}
+
+interface EnhancedMessage extends Message {
+  isFirstInGroup?: boolean;
+  isLastInGroup?: boolean;
+}
+
+type ProcessedItem = EnhancedMessage | DateDivider;
+
+function isDateDivider(item: ProcessedItem): item is DateDivider {
+  return (item as DateDivider).isDateDivider === true;
+}
+
+function isMessage(item: ProcessedItem): item is EnhancedMessage {
+  return (item as EnhancedMessage).senderId !== undefined;
+}
+
+// MessageBubble component implementation (unchanged)
+const MessageBubble: React.FC<MessageBubbleProps> = ({ 
   message, 
   isCurrentUser, 
   sender, 
@@ -21,17 +58,11 @@ const MessageBubble = ({
 }) => {
   const [showOptions, setShowOptions] = useState(false);
   
-  // Safe timestamp conversion
   const messageTime = safeTimestampToDate(message.createdAt) || new Date();
-  
-  // Message status - unread, delivered, etc.
   const isRead = message.readBy && Object.keys(message.readBy).length > 1;
-  
-  // Determine if this is a deleted message
   const isDeleted = message.deleted;
   
-  // Helper function to format time
-  const formatTime = (date) => {
+  const formatTime = (date: Date): string => {
     if (!date) return '';
     const hours = date.getHours();
     const minutes = date.getMinutes();
@@ -62,7 +93,7 @@ const MessageBubble = ({
         </div>
       )}
       
-      <div className={`max-w-[75%] group ${!isCurrentUser && !showAvatar && 'ml-10'}`}>
+      <div className={`max-w-[75%] group ${!isCurrentUser && !showAvatar ? 'ml-10' : ''}`}>
         {isFirstInGroup && !isCurrentUser && (
           <div className="text-xs text-gray-500 dark:text-gray-400 ml-1 mb-1">
             {sender?.displayName || 'User'}
@@ -140,10 +171,12 @@ const MessageBubble = ({
   );
 };
 
-function MessageThread({ onScrollUpThreshold, className }: { 
-  onScrollUpThreshold?: () => void, 
-  className?: string 
-}) {
+interface MessageThreadProps {
+  onScrollUpThreshold?: () => void;
+  className?: string;
+}
+
+const MessageThread: React.FC<MessageThreadProps> = ({ onScrollUpThreshold, className }) => {
   const { user } = useAuth();
   const { 
     messages, 
@@ -157,41 +190,32 @@ function MessageThread({ onScrollUpThreshold, className }: {
   } = useMessages();
   
   // Refs for scrolling
-  const parentRef = useRef(null);
-  const messagesEndRef = useRef(null);
-  const lastMessageCountRef = useRef(0);
-  const initialScrollDoneRef = useRef(false);
-  const isLoadingMoreRef = useRef(false);
+  const parentRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isLoadingMoreRef = useRef<boolean>(false);
+  const initialRenderRef = useRef<boolean>(true);
   
   // State for UI interactions
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   
-  // Track which date dividers we've shown
-  const [dateKeys, setDateKeys] = useState({});
+  // Extract chat ID for stable dependency in useEffect
+  const chatId = useMemo(() => selectedChat?.id || null, [selectedChat]);
   
-  // Create a Map for quick lookup of shown date dividers
-  const dateKeyMap = useMemo(() => {
-    return new Map(Object.entries(dateKeys).map(([key, value]) => [key, value]));
-  }, [dateKeys]);
-  
-  // Enhanced messages with date dividers
-  const processedItems = useMemo(() => {
+  // Process messages for display (without reversing - maintain chronological order)
+  const processedItems = useMemo((): ProcessedItem[] => {
     if (!messages.length) return [];
     
-    const items = [];
-    const seenDates = new Set();
+    const items: ProcessedItem[] = [];
+    const seenDates = new Set<string>();
     
-    // Process each message - working with messages in chronological order (oldest first)
+    // Process messages in chronological order (oldest first)
     messages.forEach((message) => {
-      // Safely get the message date with null checking
       const messageDate = safeTimestampToDate(message.createdAt) || new Date();
       const dateKey = messageDate.toDateString();
       
-      // If we haven't shown this date yet
+      // Add date divider if we haven't seen this date yet
       if (!seenDates.has(dateKey)) {
         seenDates.add(dateKey);
-        
-        // Add a date divider
         items.push({
           isDateDivider: true,
           date: messageDate,
@@ -200,17 +224,17 @@ function MessageThread({ onScrollUpThreshold, className }: {
       }
       
       // Add the message
-      items.push(message);
+      items.push(message as EnhancedMessage);
     });
     
     return items;
   }, [messages]);
   
   // Group messages by sender for better UI presentation
-  const groupedProcessedItems = useMemo(() => {
+  const groupedProcessedItems = useMemo((): ProcessedItem[] => {
     return processedItems.map((item, index) => {
       // Skip date dividers
-      if ('isDateDivider' in item) return item;
+      if (isDateDivider(item)) return item;
       
       const message = item;
       const prevItem = index > 0 ? processedItems[index - 1] : null;
@@ -219,14 +243,14 @@ function MessageThread({ onScrollUpThreshold, className }: {
       // Check if previous item is a date divider or a message from another sender
       const isFirstInGroup = 
         !prevItem || 
-        'isDateDivider' in prevItem || 
-        prevItem.senderId !== message.senderId;
+        isDateDivider(prevItem) || 
+        (isMessage(prevItem) && prevItem.senderId !== message.senderId);
       
       // Check if next item is a date divider or a message from another sender
       const isLastInGroup = 
         !nextItem || 
-        'isDateDivider' in nextItem || 
-        nextItem.senderId !== message.senderId;
+        isDateDivider(nextItem) || 
+        (isMessage(nextItem) && nextItem.senderId !== message.senderId);
       
       return {
         ...message,
@@ -236,75 +260,70 @@ function MessageThread({ onScrollUpThreshold, className }: {
     });
   }, [processedItems]);
 
-  // Virtual list for performance - with Instagram-style bottom-up approach
+  // Create virtualizer
   const virtualizer = useVirtualizer({
     count: groupedProcessedItems.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 80, // Estimated average height of a message
+    estimateSize: () => 80,
     overscan: 10,
   });
   
-  // Scroll to bottom on initial load - fixed to ensure we start at the bottom
-  useEffect(() => {
-    if (!messages.length || !parentRef.current || !messagesEndRef.current) return;
-    
-    // Always scroll to bottom on initial load
-    if (!initialScrollDoneRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'auto' });
-      initialScrollDoneRef.current = true;
-    } 
-    // On new messages, scroll to bottom if we're already near the bottom
-    else if (messages.length > lastMessageCountRef.current) {
-      const container = parentRef.current;
-      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-      
-      if (isNearBottom && messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-      }
-    }
-    
-    // Update the reference for message count
-    lastMessageCountRef.current = messages.length;
-  }, [messages.length]);
+  // Direct scroll to bottom without animation
+  const scrollToBottomInstantly = useCallback(() => {
+    if (!parentRef.current) return;
+    parentRef.current.scrollTop = parentRef.current.scrollHeight;
+  }, []);
   
-  // Reset scroll state when switching chats
+  // Scroll to bottom on initial render and when chat changes
   useEffect(() => {
-    initialScrollDoneRef.current = false;
-    lastMessageCountRef.current = 0;
-  }, [selectedChat?.id]);
+    if (chatId) {
+      initialRenderRef.current = true;
+    }
+  }, [chatId]);
+  
+  // Scroll to bottom when messages update
+  useEffect(() => {
+    if (messages.length > 0 && parentRef.current) {
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        scrollToBottomInstantly();
+        initialRenderRef.current = false;
+      });
+    }
+  }, [messages, scrollToBottomInstantly]);
   
   // Handle loading more messages when scrolling up
   const handleScroll = useCallback(async () => {
     if (!parentRef.current || isLoadingMoreRef.current || !hasMoreMessages) return;
     
-    // Check if we're near the top - using a more sensitive threshold (100px from top)
-    const { scrollTop } = parentRef.current;
+    // Check if we're near the top (100px threshold)
+    const scrollTop = parentRef.current.scrollTop;
     
     if (scrollTop < 100) {
       isLoadingMoreRef.current = true;
       setIsLoadingMore(true);
       
       try {
-        // Record scroll position and height before loading more messages
+        // Record scroll position and height before loading
         const scrollContainer = parentRef.current;
+        if (!scrollContainer) return;
+        
         const oldScrollHeight = scrollContainer.scrollHeight;
         const oldScrollTop = scrollContainer.scrollTop;
         
         // Load older messages
         await loadMoreMessages();
         
-        // After messages load, keep the scroll position relative to the content
-        // so the viewport doesn't jump
-        setTimeout(() => {
+        // Preserve scroll position after loading
+        requestAnimationFrame(() => {
           if (scrollContainer) {
             const newScrollHeight = scrollContainer.scrollHeight;
             const heightDifference = newScrollHeight - oldScrollHeight;
             scrollContainer.scrollTop = oldScrollTop + heightDifference;
           }
-        }, 0);
+        });
       } finally {
         setIsLoadingMore(false);
-        // Add a small delay before allowing another load
         setTimeout(() => {
           isLoadingMoreRef.current = false;
         }, 500);
@@ -325,26 +344,34 @@ function MessageThread({ onScrollUpThreshold, className }: {
   }, [handleScroll]);
   
   // Handle message deletion
-  const handleDeleteMessage = async (messageId: string) => {
-    await deleteMessage(messageId);
-  };
+  const handleDeleteMessage = useCallback(async (messageId: string) => {
+    if (deleteMessage) {
+      await deleteMessage(messageId);
+    }
+  }, [deleteMessage]);
   
-  // Fixed: Get participant info with improved logic for correct user display
-  const getParticipantInfo = (userId) => {
+  // IMPROVED: Get participant info with better access for accurate profile display
+  const getParticipantInfo = useCallback((userId: string) => {
     // First check if this is the current user
-    if (userId === user?.uid) {
+    if (user && userId === user.uid) {
       return {
         uid: user.uid,
         displayName: user.displayName || "You",
         photoURL: user.photoURL,
-        handicapIndex: user.handicapIndex || null
+        handicapIndex: (user as any).handicapIndex || null
       };
     }
     
-    // For other participants, get directly from selectedChat.participantProfiles
+    // For other participants, access by key directly first
     if (selectedChat?.participantProfiles) {
+      // Try direct key access first - this is how the structure usually works
+      if (selectedChat.participantProfiles[userId]) {
+        return selectedChat.participantProfiles[userId];
+      }
+      
+      // If not found by key, search by uid property
       const otherUser = Object.values(selectedChat.participantProfiles).find(
-        profile => profile.uid === userId
+        profile => profile && profile.uid === userId
       );
       
       if (otherUser) {
@@ -352,26 +379,14 @@ function MessageThread({ onScrollUpThreshold, className }: {
       }
     }
     
-    // If not found in participantProfiles, try directly from participantArray
-    if (selectedChat?.participantArray?.includes(userId)) {
-      // The user is a participant, but we don't have their profile
-      // Try to find them in the chat participant data
-      return {
-        uid: userId,
-        displayName: "User",
-        photoURL: null,
-        handicapIndex: null
-      };
-    }
-    
-    // Final fallback
+    // Last resort fallback
     return {
       uid: userId,
-      displayName: "Unknown User",
+      displayName: "User",
       photoURL: null,
       handicapIndex: null
     };
-  };
+  }, [user, selectedChat]);
 
   if (isLoadingMessages && messages.length === 0) {
     return (
@@ -397,38 +412,20 @@ function MessageThread({ onScrollUpThreshold, className }: {
     );
   }
 
+  // Instagram-style container with auto-scroll to bottom
   return (
     <div 
       ref={parentRef}
-      className={cn("flex flex-col overflow-y-auto px-4 py-4", className)}
-      style={{ height: '60vh', maxHeight: '60vh', overflow: 'auto' }}
+      className={cn("h-full overflow-y-auto px-4 py-4", className)}
+      style={{ 
+        height: '60vh', 
+        maxHeight: '60vh',
+        overflowY: 'auto',
+        // This positions content at the bottom on initial load
+        display: 'flex',
+        flexDirection: 'column-reverse',
+      }}
     >
-      {isLoadingMore && (
-        <div className="flex justify-center py-2">
-          <LoadingSpinner size="sm" color="primary" label="Loading more..." />
-        </div>
-      )}
-      
-      {hasMoreMessages && !isLoadingMore && (
-        <div className="flex justify-center py-2">
-          <button
-            onClick={() => {
-              setIsLoadingMore(true);
-              isLoadingMoreRef.current = true;
-              loadMoreMessages().finally(() => {
-                setIsLoadingMore(false);
-                setTimeout(() => {
-                  isLoadingMoreRef.current = false;
-                }, 500);
-              });
-            }}
-            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-          >
-            Load older messages
-          </button>
-        </div>
-      )}
-      
       {messages.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <p className="text-gray-500 dark:text-gray-400 text-center">
@@ -436,53 +433,56 @@ function MessageThread({ onScrollUpThreshold, className }: {
           </p>
         </div>
       ) : (
-        <div
-          style={{
-            height: `${virtualizer.getTotalSize()}px`,
-            width: '100%',
-            position: 'relative',
-          }}
-        >
-          {virtualizer.getVirtualItems().map((virtualItem) => {
-            const item = groupedProcessedItems[virtualItem.index];
-            
-            if ('isDateDivider' in item) {
-              // Render date divider
-              return (
-                <div
-                  key={item.key}
-                  className="flex justify-center my-4"
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${virtualItem.start}px)`,
-                  }}
-                >
-                  <div className="bg-gray-200 dark:bg-gray-700 px-4 py-1.5 rounded-full text-xs font-medium text-gray-600 dark:text-gray-300">
-                    {formatMessageDateDivider(item.date)}
+        <div className="flex flex-col-reverse w-full">
+          {/* Loading indicator at top (visually) - when scrolling up */}
+          {isLoadingMore && (
+            <div className="flex justify-center py-2 order-first mb-4">
+              <LoadingSpinner size="sm" color="primary" label="Loading more..." />
+            </div>
+          )}
+          
+          {/* Load more button at top (visually) */}
+          {hasMoreMessages && !isLoadingMore && (
+            <div className="flex justify-center py-2 order-first mb-4">
+              <button
+                onClick={() => {
+                  setIsLoadingMore(true);
+                  isLoadingMoreRef.current = true;
+                  loadMoreMessages().finally(() => {
+                    setIsLoadingMore(false);
+                    setTimeout(() => {
+                      isLoadingMoreRef.current = false;
+                    }, 500);
+                  });
+                }}
+                className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              >
+                Load older messages
+              </button>
+            </div>
+          )}
+          
+          {/* Messages - visually appear from bottom to top */}
+          <div style={{ position: 'relative' }}>
+            {groupedProcessedItems.map((item, index) => {
+              if (isDateDivider(item)) {
+                // Render date divider
+                return (
+                  <div key={item.key} className="flex justify-center my-4">
+                    <div className="bg-gray-200 dark:bg-gray-700 px-4 py-1.5 rounded-full text-xs font-medium text-gray-600 dark:text-gray-300">
+                      {formatMessageDateDivider(item.date)}
+                    </div>
                   </div>
-                </div>
-              );
-            } else {
-              // Regular message
-              const message = item;
-              const isCurrentUser = message.senderId === user?.uid;
-              const participant = getParticipantInfo(message.senderId);
-              
-              return (
-                <div
-                  key={message.id}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${virtualItem.start}px)`,
-                  }}
-                >
+                );
+              } else if (isMessage(item)) {
+                // Regular message
+                const message = item;
+                const isCurrentUser = user ? message.senderId === user.uid : false;
+                const participant = getParticipantInfo(message.senderId);
+                
+                return (
                   <MessageBubble
+                    key={message.id}
                     message={message}
                     isCurrentUser={isCurrentUser}
                     sender={participant}
@@ -490,17 +490,16 @@ function MessageThread({ onScrollUpThreshold, className }: {
                     isLastInGroup={message.isLastInGroup}
                     onDelete={handleDeleteMessage}
                   />
-                </div>
-              );
-            }
-          })}
+                );
+              }
+              
+              return null;
+            })}
+          </div>
         </div>
       )}
-      
-      {/* This is the bottom anchor for scrolling */}
-      <div ref={messagesEndRef} />
     </div>
   );
-}
+};
 
 export default MessageThread;

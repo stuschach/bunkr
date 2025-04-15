@@ -22,11 +22,11 @@ import { formatHandicapIndex } from '@/lib/utils/formatting';
 import { UserProfile } from '@/types/auth';
 import { useFollow } from '@/lib/hooks/useFollow';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext'; // CORRECTED: Changed from useNotification to useNotifications
 
 export function SuggestedUsers() {
   const { user } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications(); // CORRECTED: Changed from useNotification to useNotifications
   const [suggestedUsers, setSuggestedUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

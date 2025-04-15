@@ -41,7 +41,7 @@ export function useFeed({
 }: UseFeedOptions = {}) {
   const { user } = useAuth();
   const [error, setError] = useState<Error | null>(null);
-  const { notifyLike } = useNotificationCreator();
+  const { notifyLike, notifyComment } = useNotificationCreator();
   
   // Track active post subscriptions - these will be managed by PostListener component
   const postSubscriptions = useRef<Map<string, () => void>>(new Map());
@@ -382,7 +382,7 @@ export function useFeed({
   }, [mutate, feedCacheKey]);
   
   // Toggle like for a post with optimistic UI and robust error handling
-  // UPDATED: Implements Toggle State Intent pattern to fix the like/unlike issue
+  // UPDATED: Implements Toggle State Intent pattern and notification integration
   const toggleLike = useCallback(async (postId: string, currentLikedStatus: boolean) => {
     if (!user) return;
     
@@ -526,31 +526,36 @@ export function useFeed({
         // Send notification only when liking, not unliking
         if (newLikedStatus && post.authorId !== user.uid) {
           // Determine the post type for a more specific notification
-          let postTypeLabel = "post";
+          let postTypeHint = "post";
           let notificationContent = "";
           
           if (post.postType === 'round') {
-            postTypeLabel = "round";
+            postTypeHint = "round";
             notificationContent = `Round at ${post.courseName || 'golf course'}`;
           } 
           else if (post.postType === 'tee-time') {
-            postTypeLabel = "tee time";
+            postTypeHint = "tee time";
             notificationContent = `Tee time at ${post.courseName || 'golf course'}`;
           }
           else if (post.media && post.media.length > 0) {
             // This is a media post
-            postTypeLabel = post.media[0].type === 'image' ? "photo" : "video";
-            notificationContent = post.content || `${post.author?.displayName || 'User'}'s ${postTypeLabel}`;
+            postTypeHint = post.media[0].type === 'image' ? "photo" : "video";
+            notificationContent = post.content || `${post.author?.displayName || 'User'}'s ${postTypeHint}`;
           }
           else {
             // Regular text post
             notificationContent = post.content || "post";
           }
           
-          console.log(`Sending like notification for ${postTypeLabel}`);
+          console.log(`Sending like notification for ${postTypeHint}`);
           
-          // Send notification with post type-specific content
-          await notifyLike(postId, post.authorId, notificationContent);
+          try {
+            // Send notification with post type-specific content
+            await notifyLike(postId, post.authorId, notificationContent);
+          } catch (notifyError) {
+            console.error('Error sending notification:', notifyError);
+            // Don't fail the whole operation if notification fails
+          }
         }
       }
       
@@ -610,7 +615,7 @@ export function useFeed({
     }
   }, [user, postsWithLocalState, notifyLike]);
   
-  // Add a comment to a post
+  // Add a comment to a post with notification integration
   const addComment = useCallback(async (
     postId: string,
     commentText: string,
@@ -686,11 +691,69 @@ export function useFeed({
         }
       }
       
+      // Send notification if commenting on someone else's post
+      if (post.authorId !== user.uid) {
+        try {
+          // Determine post type and content for notification
+          let postTypeHint = "post";
+          let notificationContent = "";
+          
+          if (post.postType === 'round') {
+            postTypeHint = "round";
+            notificationContent = `Round at ${post.courseName || 'golf course'}`;
+          } 
+          else if (post.postType === 'tee-time') {
+            postTypeHint = "tee time";
+            notificationContent = `Tee time at ${post.courseName || 'golf course'}`;
+          }
+          else if (post.media && post.media.length > 0) {
+            postTypeHint = post.media[0].type === 'image' ? "photo" : "video";
+            notificationContent = post.content || `${post.author?.displayName || 'User'}'s ${postTypeHint}`;
+          }
+          else {
+            notificationContent = post.content || "post";
+          }
+          
+          await notifyComment(postId, post.authorId, commentText, notificationContent);
+          console.log(`Comment notification sent to ${post.authorId}`);
+        } catch (notifyError) {
+          console.error('Error sending comment notification:', notifyError);
+          // Continue even if notification fails
+        }
+      }
+      
+      // Check for @mentions in the comment
+      const mentionRegex = /@(\w+)/g;
+      let match;
+      const mentionedUsers = new Set<string>();
+      
+      while ((match = mentionRegex.exec(commentText)) !== null) {
+        const username = match[1];
+        // Here you would need to resolve usernames to user IDs
+        // This is just a placeholder for the concept
+        try {
+          // const userId = await getUserIdByUsername(username);
+          // if (userId && userId !== user.uid && userId !== post.authorId) {
+          //   mentionedUsers.add(userId);
+          // }
+        } catch (error) {
+          console.error(`Error resolving username ${username}:`, error);
+        }
+      }
+      
+      // Notify mentioned users
+      // for (const mentionedUserId of mentionedUsers) {
+      //   try {
+      //     await notifyMention(mentionedUserId, postId, 'comment', commentText);
+      //   } catch (error) {
+      //     console.error(`Error sending mention notification to ${mentionedUserId}:`, error);
+      //   }
+      // }
+      
       // Notify callback if provided
       if (onSuccess) {
         onSuccess(commentId);
       }
-      
     } catch (err) {
       console.error('Error adding comment:', err);
       
@@ -735,7 +798,7 @@ export function useFeed({
         return newMap;
       });
     }
-  }, [user, postsWithLocalState]);
+  }, [user, postsWithLocalState, pendingActions, notifyComment]);
   
   // Calculate loading states
   const isLoadingInitial = !feedPages && !swrError;
@@ -752,6 +815,7 @@ export function useFeed({
     refresh,
     toggleLike,
     addComment,
+    handlePostVisibility,
     pendingActions: Array.from(pendingActions.keys()),
     visiblePostIds,
     handlePostVisibility,

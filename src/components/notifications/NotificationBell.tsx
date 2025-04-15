@@ -15,7 +15,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   className,
   variant = 'default'
 }) => {
-  const { unreadCount, hasNewNotifications, clearNewNotificationsFlag } = useNotifications();
+  const { unreadCount, hasNewNotifications, clearNewNotificationsFlag, markAllAsRead } = useNotifications();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const bellRef = useRef<HTMLButtonElement>(null);
@@ -44,11 +44,16 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     };
   }, [hasNewNotifications, isDropdownOpen]);
 
-  const toggleDropdown = () => {
-    setIsDropdownOpen(!isDropdownOpen);
+  // Handle mouse down on bell - using mousedown instead of click
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent default behavior
     
-    if (!isDropdownOpen) {
-      // Clear the "new notifications" flag when opening the dropdown
+    // Simple toggle with value directly from state
+    const newDropdownState = !isDropdownOpen;
+    setIsDropdownOpen(newDropdownState);
+    
+    // If we're opening the dropdown
+    if (newDropdownState) {
       clearNewNotificationsFlag();
       setIsAnimating(false);
       
@@ -56,11 +61,10 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         clearTimeout(animationTimeoutRef.current);
         animationTimeoutRef.current = null;
       }
+      
+      // Mark all as read when opening
+      markAllAsRead();
     }
-  };
-
-  const closeDropdown = () => {
-    setIsDropdownOpen(false);
   };
 
   // Generate the animation class based on state
@@ -83,7 +87,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
           animationClass,
           className
         )}
-        onClick={toggleDropdown}
+        onMouseDown={handleMouseDown} // Using mousedown instead of click
         aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
       >
         {variant === 'default' ? (
@@ -147,7 +151,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
       {/* Notification dropdown */}
       <NotificationDropdown 
         isOpen={isDropdownOpen} 
-        onClose={closeDropdown} 
+        onClose={() => setIsDropdownOpen(false)} 
       />
       
       {/* Add bell ring animation to styles */}

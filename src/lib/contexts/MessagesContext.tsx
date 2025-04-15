@@ -1,4 +1,6 @@
 // src/lib/contexts/MessagesContext.tsx
+'use client';
+
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { MessagingService } from '@/lib/services/MessagingService';
@@ -12,8 +14,31 @@ import {
 import { PAGINATION } from '../constants';
 import { safeTimestampToDate, safeToFirestoreTimestamp } from '@/lib/utils/timestamp-utils';
 import { getFunctions, Functions, HttpsCallableResult } from 'firebase/functions';
+import { Timestamp } from 'firebase/firestore';
+import { Toast, ToastProps } from '@/components/common/feedback/Toast';
+
+// Toast function implementation without redeclaring messagingService
+interface ToastConfig extends Omit<ToastProps, 'open' | 'onClose'> {
+  action?: React.ReactNode;
+}
+
+// Simple toast function implementation
+function showToast(options: ToastConfig) {
+  // In a real implementation, this would add the toast to a context/state
+  console.log('Toast:', options);
+  // For now, this is just a stub that logs the toast
+  // The actual Toast component would be rendered elsewhere
+}
+
+// Initialize messaging service
+const messagingService = MessagingService.getInstance();
 
 // Define the context shape
+// Extend Message type to include optimistic message properties
+interface OptimisticMessage extends Message {
+  isOptimistic?: boolean;
+}
+
 interface MessagesContextType {
   // Data
   chats: Chat[];
@@ -43,6 +68,7 @@ interface MessagesContextType {
   startChatWithUser: (userId: string) => Promise<string | null>;
   clearError: () => void;
   setError: (error: string | null) => void;
+  retryFailedMessages: () => Promise<void>;
 }
 
 // Create the context with default values
@@ -72,7 +98,8 @@ const MessagesContext = createContext<MessagesContextType>({
   searchUsers: async () => [],
   startChatWithUser: async () => null,
   clearError: () => {},
-  setError: () => {}
+  setError: () => {},
+  retryFailedMessages: async () => {}
 });
 
 // Provider props
@@ -109,8 +136,7 @@ const retryOperation = async <T,>(
  * Provider component for messages functionality
  */
 export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) => {
-  const { user } = useAuth();
-  const messagingService = MessagingService.getInstance();
+  const { user, loading: authLoading } = useAuth();
   
   // Firebase Functions initialization
   const [functionsInitialized, setFunctionsInitialized] = useState(false);
@@ -120,7 +146,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<OptimisticMessage[]>([]);
   const [unreadCounts, setUnreadCounts] = useState<UnreadCounts>({ 
     totalUnread: 0, 
     unreadByChat: {} 
@@ -142,11 +168,12 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
   const isProcessingReadUpdate = useRef(false);
   const recentlyReadMessageIds = useRef<Set<string>>(new Set());
   const lastSelectedChatRef = useRef<string | null>(null);
-  const messageUpdateHandlerRef = useRef<(messages: Message[]) => void>(() => {});
+  const messageUpdateHandlerRef = useRef<(messages: OptimisticMessage[]) => void>(() => {});
   const mountedRef = useRef(true);
-  const processUnreadMessagesRef = useRef<(messages: Message[], uid: string) => void>(
+  const processUnreadMessagesRef = useRef<(messages: OptimisticMessage[], uid: string) => void>(
     (messages, uid) => {}
   );
+  const optimisticMessagesRef = useRef<Map<string, OptimisticMessage>>(new Map());
   
   // Fixed: Reset loading state on component mount to prevent stale loading states
   useEffect(() => {
@@ -249,7 +276,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
           });
       }, 300);
     };
-  }, [selectedChatId, messagingService]);
+  }, [selectedChatId]);
   
   // Load chats with retry and better error handling
   useEffect(() => {
@@ -280,7 +307,6 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
       
       try {
         console.log("About to call messagingService.getUserChats()");
-        console.log("MessagingService instance:", messagingService);
         
         // Add a timeout for better error handling
         let loadedChats: Chat[] = [];
@@ -355,7 +381,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
     return () => {
       isMounted = false;
     };
-  }, [user, functionsInitialized, messagingService, chats.length]);
+  }, [user, functionsInitialized, chats.length]);
   
   // Load unread counts with better error handling
   useEffect(() => {
@@ -408,15 +434,15 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
       clearInterval(interval);
       isMounted = false;
     };
-  }, [user, functionsInitialized, messagingService]);
+  }, [user, functionsInitialized]);
   
   // Handle chat selection with message loading and subscription
   useEffect(() => {
-    let messageUnsubscribe = null;
+    let messageUnsubscribe: (() => void) | null = null;
     let isMounted = true;
     
     // Set up the message update handler with a stable reference
-    messageUpdateHandlerRef.current = (updatedMessages: Message[]) => {
+    messageUpdateHandlerRef.current = (updatedMessages: OptimisticMessage[]) => {
       if (!isMounted) return;
       
       // Safe handling of messages with timestamp conversion
@@ -427,7 +453,37 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
           createdAt: safeToFirestoreTimestamp(msg.createdAt)
         }));
         
-        setMessages(messagesWithSafeTimestamps);
+        // Merge with any optimistic messages that haven't been confirmed yet
+        const combinedMessages = [...messagesWithSafeTimestamps];
+        
+        // Replace optimistic messages with real ones if they've arrived
+        optimisticMessagesRef.current.forEach((optimisticMsg, tempId) => {
+          // Check if we have a real message with this content and timestamp close to our optimistic one
+          const matchingRealMsg = messagesWithSafeTimestamps.find(msg => 
+            msg.senderId === optimisticMsg.senderId && 
+            msg.content === optimisticMsg.content &&
+            Math.abs((msg.createdAt as Timestamp).toMillis() - 
+                   (optimisticMsg.createdAt as Timestamp).toMillis()) < 10000
+          );
+          
+          if (matchingRealMsg) {
+            // Found a match, remove this optimistic message
+            optimisticMessagesRef.current.delete(tempId);
+            console.log('Replaced optimistic message with real message:', matchingRealMsg.id);
+          } else {
+            // No match found, keep the optimistic message
+            combinedMessages.push(optimisticMsg);
+          }
+        });
+        
+        // Sort all messages by timestamp
+        combinedMessages.sort((a, b) => {
+          const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+          const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+          return aTime - bTime;
+        });
+        
+        setMessages(combinedMessages);
         
         // Process unread messages if user is available
         if (user) {
@@ -531,9 +587,9 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
           
           if (isMounted) {
             // Set a more specific error message based on the error type
-            if (chatError.name === 'NotFoundError') {
+            if ((chatError as Error).name === 'NotFoundError') {
               setError('This conversation could not be found. It may have been deleted.');
-            } else if (chatError.name === 'PermissionError') {
+            } else if ((chatError as Error).name === 'PermissionError') {
               setError('You do not have permission to view this conversation.');
             } else {
               setError('Failed to load the conversation. Please try again later.');
@@ -587,7 +643,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
       }
       isMounted = false;
     };
-  }, [selectedChatId, user, functionsInitialized, messagingService, chats]);
+  }, [selectedChatId, user, functionsInitialized, chats]);
   
   // Select a chat with protection against redundant updates
   const selectChat = useCallback(async (chatId: string | null): Promise<void> => {
@@ -599,32 +655,290 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
     }
   }, []);
   
-  // Send a message with retry and better error handling
+  // IMPORTANT: Define refreshChats before sendMessage since it's used in sendMessage's dependency array
+  // Refresh chats with retry
+  const refreshChats = useCallback(async (): Promise<void> => {
+    if (!user || !functionsInitialized) return;
+    
+    setIsLoadingChats(true);
+    setError(null);
+    
+    try {
+      // Invalidate cache first
+      messagingService.invalidateUserChatsCache();
+      
+      // Load fresh data with retry
+      const loadedChats = await retryOperation(
+        () => messagingService.getUserChats(),
+        2
+      );
+      
+      setChats(loadedChats);
+      
+      // Also refresh unread counts
+      const counts = await retryOperation(
+        () => messagingService.getTotalUnreadCounts(),
+        2
+      );
+      
+      setUnreadCounts(counts);
+    } catch (err) {
+      console.error('Error refreshing chats:', err);
+      const errorMessage = err instanceof Error ? 
+        `Failed to refresh conversations: ${err.message}` : 
+        'Failed to refresh conversations';
+      setError(errorMessage);
+    } finally {
+      setIsLoadingChats(false);
+    }
+  }, [user, functionsInitialized]);
+  
+  // Enhanced sendMessage with better error handling and message recovery
   const sendMessage = useCallback(async (content: string): Promise<boolean> => {
     if (!selectedChatId || !content.trim() || !user || !functionsInitialized) {
+      if (!selectedChatId) {
+        setError("No conversation selected");
+      } else if (!content.trim()) {
+        setError("Message cannot be empty");
+      } else if (!user) {
+        setError("You must be logged in to send messages");
+      }
       return false;
     }
     
     setIsSendingMessage(true);
     setError(null);
     
+    // Save the message content for potential recovery
+    const messageBackup = content.trim();
+    const chatBackup = selectedChatId;
+    let optimisticId = '';
+    
     try {
+      // Add a delay to allow Firebase to properly update remote state
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Create an optimistic message for immediate UI feedback
+      optimisticId = `temp-${Date.now()}`;
+      const optimisticMessage: OptimisticMessage = {
+        id: optimisticId,
+        chatId: selectedChatId,
+        senderId: user.uid,
+        content: content.trim(),
+        createdAt: Timestamp.now(),
+        readBy: { [user.uid]: true },
+        // Flag to indicate this is optimistic (will be removed when real message arrives)
+        isOptimistic: true
+      };
+      
+      // Store the optimistic message in our ref and update UI
+      optimisticMessagesRef.current.set(optimisticId, optimisticMessage);
+      
+      // Add the optimistic message to the UI immediately
+      setMessages(prevMessages => [...prevMessages, optimisticMessage]);
+      
+      // Try to send with retry logic
       await retryOperation(
-        () => messagingService.sendMessage(selectedChatId, content),
-        2 // Fewer retries for user-initiated actions
+        async () => {
+          const result = await messagingService.sendMessage(selectedChatId, content);
+          
+          // If successful, replace the optimistic message with the real one
+          if (result) {
+            // Remove the optimistic message from our ref
+            optimisticMessagesRef.current.delete(optimisticId);
+            
+            // Update messages to replace optimistic with real
+            setMessages(prevMessages => 
+              prevMessages.map(msg => 
+                // Replace our temp message with the real one
+                (msg.id === optimisticId ? { ...result, isOptimistic: false } : msg)
+              )
+            );
+          }
+          return result;
+        },
+        3, // 3 retries
+        500  // 500ms initial delay, will increase exponentially
       );
+      
+      // Also update the chat list to show the message immediately
+      await refreshChats().catch(err => {
+        console.warn('Error refreshing chats after message sent:', err);
+      });
+      
       return true;
     } catch (err) {
       console.error('Error sending message:', err);
-      const errorMessage = err instanceof Error ? 
-        `Failed to send message: ${err.message}` : 
-        'Failed to send message';
+      
+      // Remove the optimistic message on failure
+      optimisticMessagesRef.current.delete(optimisticId);
+      setMessages(prevMessages => 
+        prevMessages.filter(msg => !msg.isOptimistic)
+      );
+      
+      // Create a more user-friendly error message based on the error type
+      let errorMessage = 'Failed to send message';
+      
+      if (err instanceof Error) {
+        // Parse specific error types
+        if (err.message.includes('not-found')) {
+          errorMessage = 'This conversation no longer exists';
+        } else if (err.message.includes('permission-denied')) {
+          errorMessage = 'You do not have permission to send messages in this conversation';
+        } else if (err.message.includes('unavailable') || err.message.includes('resource-exhausted')) {
+          errorMessage = 'Service is temporarily unavailable. Please try again';
+        } else if (err.message.includes('timeout') || err.message.includes('deadline-exceeded')) {
+          errorMessage = 'Request timed out. Please check your connection and try again';
+        } else if (err.message.includes('network')) {
+          errorMessage = 'Network error. Please check your connection and try again';
+        } else {
+          // Include the original error for debugging but make it user-friendly
+          errorMessage = `Failed to send message: ${err.message}`;
+        }
+      }
+      
       setError(errorMessage);
+      
+      // Show toast for better visibility
+      showToast({
+        title: "Message not sent",
+        description: errorMessage,
+        variant: "error",
+        duration: 5000,
+        action: (
+          <button 
+            className="ml-2 px-2 py-1 bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 text-xs rounded hover:bg-red-200 dark:hover:bg-red-800 transition-colors"
+            onClick={() => sendMessage(messageBackup)}
+          >
+            Retry
+          </button>
+        )
+      });
+      
+      // Store the failed message attempt for potential recovery
+      try {
+        const storedMessages = JSON.parse(localStorage.getItem('bunkr_failed_messages') || '[]');
+        storedMessages.push({
+          chatId: chatBackup,
+          content: messageBackup,
+          timestamp: Date.now()
+        });
+        localStorage.setItem('bunkr_failed_messages', JSON.stringify(storedMessages));
+      } catch (storageError) {
+        console.warn('Could not store failed message for recovery:', storageError);
+      }
+      
       return false;
     } finally {
       setIsSendingMessage(false);
     }
-  }, [selectedChatId, user, functionsInitialized, messagingService]);
+  }, [selectedChatId, user, functionsInitialized, refreshChats]);
+  
+  // Retry failed messages implementation
+  const retryFailedMessages = useCallback(async (): Promise<void> => {
+    try {
+      const storedMessages = JSON.parse(localStorage.getItem('bunkr_failed_messages') || '[]');
+      
+      if (storedMessages.length === 0) return;
+      
+      // Remove messages older than 24 hours
+      const validMessages = storedMessages.filter(
+        (msg: any) => Date.now() - msg.timestamp < 24 * 60 * 60 * 1000
+      );
+      
+      if (validMessages.length === 0) {
+        localStorage.removeItem('bunkr_failed_messages');
+        return;
+      }
+      
+      // Process valid messages
+      const successfulMessageIndices: number[] = [];
+      
+      for (let i = 0; i < validMessages.length; i++) {
+        const msg = validMessages[i];
+        
+        try {
+          if (msg.chatId === selectedChatId) {
+            // Only retry if we're in the same chat
+            const success = await sendMessage(msg.content);
+            
+            if (success) {
+              successfulMessageIndices.push(i);
+            }
+          }
+        } catch (error) {
+          console.warn('Error retrying failed message:', error);
+        }
+        
+        // Wait a bit between retries
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      // Remove successful messages from storage
+      const remainingMessages = validMessages.filter(
+        (_: any, index: number) => !successfulMessageIndices.includes(index)
+      );
+      
+      if (remainingMessages.length === 0) {
+        localStorage.removeItem('bunkr_failed_messages');
+      } else {
+        localStorage.setItem('bunkr_failed_messages', JSON.stringify(remainingMessages));
+      }
+    } catch (error) {
+      console.error('Error retrying failed messages:', error);
+    }
+  }, [selectedChatId, sendMessage]);
+  
+  // Network status detection
+  useEffect(() => {
+    // Only set up listener in browser environment
+    if (typeof window === 'undefined') return;
+    
+    // Track online status changes
+    const handleOnline = () => {
+      console.log('Network connection restored');
+      // When we come back online, retry fetching data and failed messages
+      if (user && functionsInitialized) {
+        refreshChats()
+          .then(() => {
+            // After refreshing chats, try to retry any failed messages
+            retryFailedMessages();
+          })
+          .catch(err => {
+            console.warn('Error refreshing data after coming online:', err);
+          });
+      }
+    };
+    
+    const handleOffline = () => {
+      console.log('Network connection lost');
+      // Show toast notification when offline
+      showToast({
+        title: "You are offline",
+        description: "Messages will be sent when you reconnect",
+        variant: "warning",
+        duration: 5000
+      });
+    };
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    // Also check connectivity status when mounting
+    if (navigator.onLine && user && functionsInitialized) {
+      retryFailedMessages();
+      
+      // Also try to retry any pending messages in the service
+      messagingService.retryPendingMessages().catch(err => {
+        console.warn('Error retrying pending messages from service:', err);
+      });
+    }
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [user, functionsInitialized, refreshChats, retryFailedMessages]);
   
   // Mark messages as read with retry
   const markMessagesAsRead = useCallback(async (messageIds: string[]): Promise<boolean> => {
@@ -668,7 +982,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
       // Don't show error to user for this operation
       return false;
     }
-  }, [selectedChatId, user, functionsInitialized, messagingService]);
+  }, [selectedChatId, user, functionsInitialized]);
   
   // Delete a message with retry
   const deleteMessage = useCallback(async (messageId: string): Promise<boolean> => {
@@ -705,7 +1019,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
       setError(errorMessage);
       return false;
     }
-  }, [selectedChatId, user, functionsInitialized, messagingService]);
+  }, [selectedChatId, user, functionsInitialized]);
   
   // Load more messages (pagination) with retry - Instagram style approach
   const loadMoreMessages = useCallback(async (): Promise<boolean> => {
@@ -778,44 +1092,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
     } finally {
       setIsLoadingMessages(false);
     }
-  }, [selectedChatId, user, functionsInitialized, messages, currentPage, hasMoreMessages, messagingService]);
-  
-  // Refresh chats with retry
-  const refreshChats = useCallback(async (): Promise<void> => {
-    if (!user || !functionsInitialized) return;
-    
-    setIsLoadingChats(true);
-    setError(null);
-    
-    try {
-      // Invalidate cache first
-      messagingService.invalidateUserChatsCache();
-      
-      // Load fresh data with retry
-      const loadedChats = await retryOperation(
-        () => messagingService.getUserChats(),
-        2
-      );
-      
-      setChats(loadedChats);
-      
-      // Also refresh unread counts
-      const counts = await retryOperation(
-        () => messagingService.getTotalUnreadCounts(),
-        2
-      );
-      
-      setUnreadCounts(counts);
-    } catch (err) {
-      console.error('Error refreshing chats:', err);
-      const errorMessage = err instanceof Error ? 
-        `Failed to refresh conversations: ${err.message}` : 
-        'Failed to refresh conversations';
-      setError(errorMessage);
-    } finally {
-      setIsLoadingChats(false);
-    }
-  }, [user, functionsInitialized, messagingService]);
+  }, [selectedChatId, user, functionsInitialized, messages, currentPage, hasMoreMessages]);
   
   // Search users with retry
   const searchUsers = useCallback(async (query: string): Promise<SimplifiedUserProfile[]> => {
@@ -837,7 +1114,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
     } finally {
       setIsSearchingUsers(false);
     }
-  }, [user, functionsInitialized, messagingService]);
+  }, [user, functionsInitialized]);
   
   // Start a chat with a user with retry
   const startChatWithUser = useCallback(async (userId: string): Promise<string | null> => {
@@ -865,7 +1142,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
       setError(errorMessage);
       return null;
     }
-  }, [user, functionsInitialized, refreshChats, messagingService]);
+  }, [user, functionsInitialized, refreshChats]);
   
   // Cleanup on unmount
   useEffect(() => {
@@ -873,7 +1150,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
       mountedRef.current = false;
       messagingService.cleanupAllSubscriptions();
     };
-  }, [messagingService]);
+  }, []);
   
   // Context value
   const value: MessagesContextType = {
@@ -900,7 +1177,8 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({ children }) 
     searchUsers,
     startChatWithUser,
     clearError,
-    setError
+    setError,
+    retryFailedMessages
   };
   
   return (

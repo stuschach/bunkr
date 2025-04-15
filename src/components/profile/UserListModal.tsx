@@ -14,11 +14,6 @@ import { FollowButton } from '@/components/profile/FollowButton';
 import { UserProfile } from '@/types/auth';
 import { useFollowContext } from '@/lib/contexts/FollowContext';
 
-// Helper function to get connection prefix for compound IDs
-function getConnectionTypePrefix(connectionType: 'follower' | 'following'): string {
-  return connectionType;
-}
-
 interface UserListModalProps {
   userId: string;
   type: 'followers' | 'following';
@@ -215,9 +210,9 @@ export function UserListModal({
     }
   };
   
-  // Function to handle follow state changes
-  const handleFollowChange = (targetUserId: string, isFollowing: boolean) => {
-    console.log(`[UserListModal] Follow state changed for ${targetUserId}: ${isFollowing}`);
+  // Function to handle follow state changes - updated to match new signature
+  const handleFollowChange = (isFollowing: boolean) => {
+    console.log(`[UserListModal] Follow state changed: ${isFollowing}`);
     // No need for local state management - context handles it
   };
   
@@ -300,7 +295,7 @@ export function UserListModal({
                       <div className="ml-2">
                         <FollowButton 
                           userId={profile.uid}
-                          onFollowChange={(isFollowing) => handleFollowChange(profile.uid, isFollowing)}
+                          onFollowChange={handleFollowChange}
                           size="sm"
                         />
                       </div>

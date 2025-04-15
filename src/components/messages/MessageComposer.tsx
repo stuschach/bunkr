@@ -1,15 +1,15 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, ChangeEvent, KeyboardEvent, FormEvent } from 'react';
 import { useMessages } from '@/lib/contexts/MessagesContext';
 import { MAX_MESSAGE_LENGTH } from '@/lib/constants';
 
-const MessageComposer = () => {
+const MessageComposer: React.FC = () => {
   const { sendMessage, selectedChatId, isSendingMessage } = useMessages();
-  const [message, setMessage] = useState('');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const textareaRef = useRef(null);
+  const [message, setMessage] = useState<string>('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   
   // Handle input change and auto-resize
-  const handleChange = (e) => {
+  const handleChange = (e: ChangeEvent<HTMLTextAreaElement>): void => {
     // Limit message length
     if (e.target.value.length <= MAX_MESSAGE_LENGTH) {
       setMessage(e.target.value);
@@ -23,7 +23,7 @@ const MessageComposer = () => {
   };
   
   // Handle message submission
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault();
     
     if (!message.trim() || !selectedChatId || isSendingMessage) return;
@@ -39,7 +39,9 @@ const MessageComposer = () => {
       }
       
       // Focus back on textarea
-      textareaRef.current.focus();
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       // Could show an error toast here
@@ -47,16 +49,23 @@ const MessageComposer = () => {
   };
   
   // Handle Enter key (send on Enter, new line on Shift+Enter)
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e);
+      
+      if (message.trim() && selectedChatId && !isSendingMessage) {
+        const form = e.currentTarget.form;
+        if (form) {
+          const fakeEvent = { preventDefault: () => {} } as FormEvent<HTMLFormElement>;
+          handleSubmit(fakeEvent);
+        }
+      }
     }
   };
   
   // Mock emoji picker (simplified for demo)
-  const EmojiPicker = () => {
-    const emojis = ['😀', '😂', '👍', '❤️', '🏌️', '⛳', '🏆', '🍺', '👏', '🔥'];
+  const EmojiPicker: React.FC = () => {
+    const emojis: string[] = ['😀', '😂', '👍', '❤️', '🏌️', '⛳', '🏆', '🍺', '👏', '🔥'];
     
     return (
       <div className="absolute bottom-full right-0 mb-2 p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-lg z-10 grid grid-cols-5 gap-2 animate-fadeIn">
@@ -66,9 +75,12 @@ const MessageComposer = () => {
             onClick={() => {
               setMessage(prev => prev + emoji);
               setShowEmojiPicker(false);
-              textareaRef.current.focus();
+              if (textareaRef.current) {
+                textareaRef.current.focus();
+              }
             }}
             className="w-8 h-8 text-xl flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
+            type="button"
           >
             {emoji}
           </button>

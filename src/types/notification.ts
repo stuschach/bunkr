@@ -48,14 +48,16 @@ export interface Notification {
   priority?: 'normal' | 'high';
 }
 
-// New notification preferences type
+// Updated notification preferences type with showToast property
 export interface NotificationTypePreference {
   enabled: boolean;
+  showToast: boolean;  // Added this property to fix the TypeScript error
 }
 
 export interface NotificationPreferences {
   soundEnabled: boolean;
   soundVolume: number; // 0-1 range
+  toastEnabled: boolean; // Add this property to match DEFAULT_NOTIFICATION_PREFERENCES
   typePreferences: {
     [key in NotificationType]?: NotificationTypePreference;
   };

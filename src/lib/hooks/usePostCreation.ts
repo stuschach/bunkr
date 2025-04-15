@@ -4,14 +4,14 @@ import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase/config';
 import { fanoutPostToFeeds } from '@/lib/firebase/feed-service';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 
 export function usePostCreation() {
   const { user } = useAuth();
   const [isCreating, setIsCreating] = useState(false);
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
 
-  const createPost = async (postData, postType = 'regular') => {
+  const createPost = async (postData: { content: any; media: any; visibility: any; hashtags: any; location: any; roundId: any; teeTimeId: any; courseName: any; dateTime: any; maxPlayers: any; }, postType = 'regular') => {
     if (!user) {
       throw new Error('User must be authenticated to create a post');
     }

@@ -12,7 +12,7 @@ import { ProfileImageUploader } from '@/components/profile/ProfileImageUploader'
 import { ImageUploader } from '@/components/common/media/ImageUploader';
 import { formatHandicapIndex } from '@/lib/utils/formatting';
 import { useMessages } from '@/lib/hooks/useMessages';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 import { UserProfile } from '@/types/auth';
 import { FollowButton } from '@/components/profile/FollowButton';
 import { QuickMessageModal } from '@/components/profile/QuickMessageModal';
@@ -41,7 +41,7 @@ export const ProfileHeader = memo(function ProfileHeader({
   const [showFollowersModal, setShowFollowersModal] = useState(false);
   const [showFollowingModal, setShowFollowingModal] = useState(false);
   const { getOrCreateChat } = useMessages();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   const { getFollowerCount, getFollowingCount, isFollowing, refreshFollowState } = useFollowContext();
   
   // Ensure we have the latest follow data

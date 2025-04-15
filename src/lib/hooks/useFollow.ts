@@ -1,7 +1,7 @@
 // src/lib/hooks/useFollow.ts
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
 import { useFollowContext } from '@/lib/contexts/FollowContext';
 
@@ -13,119 +13,100 @@ interface UseFollowParams {
 
 export function useFollow({ targetUserId, onFollowChange, onCountChange }: UseFollowParams) {
   const { user } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   const { notifyFollow } = useNotificationCreator();
   const { 
     toggleFollow: contextToggleFollow, 
-    isFollowing: getIsFollowing,
-    isLoading: getIsLoading,
-    getFollowerCount,
-    refreshFollowState
+    isFollowing: checkIsFollowing,
+    isLoading: checkIsLoading,
+    getFollowerCount
   } = useFollowContext();
-  
+
+  // Local state for UI feedback
+  const [isLoading, setIsLoading] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
-  
-  // Initialize follow state when the hook mounts
-  useEffect(() => {
-    if (user && targetUserId && user.uid !== targetUserId) {
-      refreshFollowState(targetUserId);
-    }
-  }, [user, targetUserId, refreshFollowState]);
-  
-  // Get current states from context
-  const isFollowing = getIsFollowing(targetUserId);
-  const isLoading = getIsLoading(targetUserId);
-  const followerCount = getFollowerCount(targetUserId);
-  
-  // Toggle follow status with fixed implementation
+
+  // Use the context to get the current follow state
+  const isFollowing = checkIsFollowing(targetUserId);
+
+  // Toggle follow status using the robust system
   const toggleFollow = useCallback(async () => {
-    if (!user) {
-      showNotification({
-        type: 'error',
-        title: 'Authentication Required',
-        description: 'You must be logged in to follow users.'
-      });
-      return;
-    }
+    if (!user || !targetUserId || isLoading) return;
     
+    // Skip if trying to follow self
     if (user.uid === targetUserId) {
       showNotification({
         type: 'info',
-        title: 'Action Not Allowed',
-        description: 'You cannot follow yourself.'
+        title: 'Action not allowed',
+        description: 'You cannot follow yourself'
       });
       return;
     }
     
+    setIsLoading(true);
+    
     try {
-      // Get previous state for comparison
-      const wasFollowing = getIsFollowing(targetUserId);
-      
-      // Toggle follow status and get the ACTUAL result from Firebase
+      // Use the context's toggleFollow method
       const result = await contextToggleFollow(targetUserId);
       
-      // Use the result from the operation, not a second local check
-      const isNowFollowing = result.isFollowing;
-      const newFollowerCount = result.followerCount;
-      
-      // Notify parent components if state changed
-      if (wasFollowing !== isNowFollowing) {
-        if (onFollowChange) {
-          onFollowChange(isNowFollowing);
-        }
-        
-        if (onCountChange) {
-          onCountChange(newFollowerCount);
-        }
-        
-        // Send follow notification if appropriate
-        if (isNowFollowing && notifyFollow) {
-          notifyFollow(targetUserId);
-        }
-        
-        // Show success notification based on the ACTUAL NEW STATE
+      // Show appropriate notification
+      if (result.isFollowing) {
+        await notifyFollow(targetUserId);
         showNotification({
           type: 'success',
-          title: isNowFollowing ? 'Following' : 'Unfollowed',
-          description: isNowFollowing 
-            ? 'You are now following this user.' 
-            : 'You have unfollowed this user.'
+          title: 'Success',
+          description: 'You are now following this user'
+        });
+      } else {
+        showNotification({
+          type: 'info',
+          title: 'Success',
+          description: 'You have unfollowed this user'
         });
       }
+      
+      // Call callback if provided
+      if (onFollowChange) {
+        onFollowChange(result.isFollowing);
+      }
+      
+      // Update count if needed
+      if (onCountChange) {
+        onCountChange(result.followerCount);
+      }
     } catch (error) {
-      console.error('[useFollow] Error toggling follow status:', error);
+      console.error('Error toggling follow:', error);
       
       showNotification({
         type: 'error',
-        title: 'Action Failed',
-        description: 'Failed to update follow status. Please try again.'
+        title: 'Error',
+        description: 'Failed to update follow status'
       });
-      
-      // Force refresh state from server to ensure accuracy
-      refreshFollowState(targetUserId);
+    } finally {
+      setIsLoading(false);
     }
-  }, [user, targetUserId, contextToggleFollow, getIsFollowing, onFollowChange, onCountChange, showNotification, refreshFollowState, notifyFollow]);
-  
-  // Helper functions for button UI remain unchanged
+  }, [user, targetUserId, isLoading, contextToggleFollow, notifyFollow, showNotification, onFollowChange, onCountChange]);
+
+  // Helper functions for the UI
   const getButtonText = useCallback(() => {
     if (isFollowing) {
       return isHovered ? 'Unfollow' : 'Following';
     }
     return 'Follow';
   }, [isFollowing, isHovered]);
-  
+
   const getButtonVariant = useCallback(() => {
     if (isFollowing) {
       return isHovered ? 'destructive' : 'outline';
     }
-    return 'primary';
+    return 'default';
   }, [isFollowing, isHovered]);
-  
+
   return {
     isFollowing,
-    followerCount,
-    isLoading,
+    isLoading: isLoading || checkIsLoading(targetUserId),
     toggleFollow,
+    followerCount: getFollowerCount(targetUserId),
     isHovered,
     setIsHovered,
     getButtonText,

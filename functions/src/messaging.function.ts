@@ -50,6 +50,7 @@ interface ChatDocument {
     content: string;
     senderId: string;
     createdAt: admin.firestore.Timestamp;
+    messageId?: string;
   };
 }
 
@@ -66,17 +67,23 @@ interface ChatParticipantProfile {
  * Determines which collection to use based on message count
  */
 function getMessageCollectionName(messageCount: number): string {
+  if (messageCount < 0) {
+    logger.warn(`Invalid message count: ${messageCount}, defaulting to 'thread'`);
+    return 'thread';
+  }
+  
   const shardId = Math.floor(messageCount / SHARD_SIZE);
   // Enforce max shard limit to match security rules
   const limitedShardId = Math.min(shardId, MAX_SHARDS - 1);
   return limitedShardId > 0 ? `thread_${limitedShardId}` : 'thread';
 }
 
-// Send a message with optimized side effects
+// Send a message with optimized side effects and improved error handling
 export const sendMessage = functions
   .runWith({
-    timeoutSeconds: 120, // Increased from 60 to 120
-    memory: '512MB',    // Increased from 256MB to 512MB
+    timeoutSeconds: 120,
+    memory: '512MB',
+    failurePolicy: true, // Enable automatic retries on failure
   })
   .https.onCall(async (data, context) => {
     // Verify authentication
@@ -87,17 +94,20 @@ export const sendMessage = functions
       );
     }
 
-    const { chatId, content } = data;
+    const { chatId, content, clientMessageId } = data;
     const userId = context.auth.uid;
     
+    // Enhanced input validation
     if (!chatId || typeof chatId !== 'string') {
       throw new functions.https.HttpsError(
         'invalid-argument',
-        'Chat ID is required'
+        'Chat ID is required and must be a string'
       );
     }
     
-    if (!content?.trim()) {
+    // Improved content validation with proper trimming
+    const trimmedContent = content?.trim();
+    if (!trimmedContent) {
       throw new functions.https.HttpsError(
         'invalid-argument',
         'Message cannot be empty'
@@ -105,62 +115,105 @@ export const sendMessage = functions
     }
 
     try {
-      logger.info(`User ${userId} sending message to chat ${chatId}`);
+      logger.info(`User ${userId} sending message to chat ${chatId} (client ID: ${clientMessageId || 'none'})`);
       
-      // Use transaction to ensure atomicity
-      return await db.runTransaction(async transaction => {
-        // Check if chat exists and user is participant
-        const chatRef = db.collection('messages').doc(chatId);
-        const chatDoc = await transaction.get(chatRef);
-        
-        if (!chatDoc.exists) {
-          throw new functions.https.HttpsError(
-            'not-found',
-            'Chat not found'
-          );
+      // Verify chat exists before transaction to fail fast
+      const chatRef = db.collection('messages').doc(chatId);
+      const chatDoc = await chatRef.get();
+      
+      if (!chatDoc.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Chat not found'
+        );
+      }
+      
+      const chatData = chatDoc.data() as ChatDocument | undefined;
+      
+      // Verify chat data exists
+      if (!chatData) {
+        throw new functions.https.HttpsError(
+          'internal',
+          'Invalid chat data structure'
+        );
+      }
+      
+      // Verify user is participant
+      const isParticipant = (
+        (chatData.participants && chatData.participants[userId] === true) ||
+        (chatData.participantArray && chatData.participantArray.includes(userId))
+      );
+      
+      if (!isParticipant) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Not a participant in this conversation'
+        );
+      }
+      
+      // Break the operation into smaller transactions
+      // 1. First calculate the message collection and create message
+      const messageCount = chatData.messageCount || 0;
+      const collectionName = getMessageCollectionName(messageCount);
+      
+      logger.info(`Using collection ${collectionName} for chat ${chatId} with message count ${messageCount}`);
+      
+      // Create message document reference
+      const messageRef = db.collection('messages')
+        .doc(chatId)
+        .collection(collectionName)
+        .doc();
+      
+      // Create message data with defensive defaults
+      const messageData = {
+        senderId: userId,
+        content: trimmedContent.substring(0, 2000), // Limit content length
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        readBy: {[userId]: true}, // Current user has read the message
+        clientMessageId: clientMessageId || null // Store this for deduplication
+      };
+      
+      // Execute first transaction - just create the message
+      await db.runTransaction(async transaction => {
+        // If client message ID is provided, check for duplicates
+        if (clientMessageId) {
+          // Query for messages with this client ID (simple deduplication)
+          const recentMessagesQuery = db.collection('messages')
+            .doc(chatId)
+            .collection(collectionName)
+            .where('clientMessageId', '==', clientMessageId)
+            .limit(1);
+            
+          const duplicateCheck = await transaction.get(recentMessagesQuery);
+          
+          if (!duplicateCheck.empty) {
+            logger.info(`Detected duplicate message with client ID: ${clientMessageId}`);
+            // Return existing message ID rather than creating a new one
+            return duplicateCheck.docs[0].id;
+          }
         }
-        
-        const chatData = chatDoc.data() as ChatDocument | undefined;
-        
-        // Verify chat data exists
-        if (!chatData) {
-          throw new functions.https.HttpsError(
-            'internal',
-            'Invalid chat data'
-          );
-        }
-        
-        // Verify user is participant
-        if (!chatData.participants?.[userId] && !chatData.participantArray?.includes(userId)) {
-          throw new functions.https.HttpsError(
-            'permission-denied',
-            'Not a participant in this conversation'
-          );
-        }
-        
-        // Check message count for sharding
-        const messageCount = chatData.messageCount || 0;
-        const collectionName = getMessageCollectionName(messageCount);
-        
-        // Create message
-        const messageRef = db.collection('messages')
-          .doc(chatId)
-          .collection(collectionName)
-          .doc();
-        
-        const messageData = {
-          senderId: userId,
-          content: content.trim(),
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          readBy: {[userId]: true} // Current user has read the message
-        };
         
         transaction.set(messageRef, messageData);
+        return messageRef.id;
+      });
+      
+      // 2. Second transaction - update the chat metadata
+      await db.runTransaction(async transaction => {
+        // Re-get the chat data to ensure we have the latest
+        const freshChatDoc = await transaction.get(chatRef);
+        if (!freshChatDoc.exists) {
+          throw new functions.https.HttpsError(
+            'not-found',
+            'Chat not found during metadata update'
+          );
+        }
+        
+        const freshChatData = freshChatDoc.data() as ChatDocument;
         
         // Update chat metadata with all necessary information
         const updateData: Record<string, any> = {
           lastMessage: {
-            content: content.trim().substring(0, 100) + (content.length > 100 ? '...' : ''),
+            content: trimmedContent.substring(0, 100) + (trimmedContent.length > 100 ? '...' : ''),
             senderId: userId,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             messageId: messageRef.id // Store this for later reference
@@ -169,15 +222,27 @@ export const sendMessage = functions
           messageCount: admin.firestore.FieldValue.increment(1)
         };
         
-        // Initialize unreadCounters if it doesn't exist
-        if (!chatData.unreadCounters) {
+        // Defensively create unreadCounters object if missing
+        if (!freshChatData.unreadCounters || typeof freshChatData.unreadCounters !== 'object') {
           updateData.unreadCounters = {};
-          chatData.participantArray.forEach(participantId => {
+          
+          // Ensure participantArray exists
+          const participants = Array.isArray(freshChatData.participantArray) 
+            ? freshChatData.participantArray 
+            : Object.keys(freshChatData.participants || {});
+          
+          // Initialize all counters
+          participants.forEach(participantId => {
             updateData.unreadCounters[participantId] = participantId === userId ? 0 : 1;
           });
         } else {
           // Increment unread counters for all other participants
-          chatData.participantArray.forEach(participantId => {
+          // Use participantArray first, fallback to participants object
+          const participants = Array.isArray(freshChatData.participantArray) 
+            ? freshChatData.participantArray 
+            : Object.keys(freshChatData.participants || {});
+          
+          participants.forEach(participantId => {
             if (participantId !== userId) {
               updateData[`unreadCounters.${participantId}`] = admin.firestore.FieldValue.increment(1);
             }
@@ -189,28 +254,70 @@ export const sendMessage = functions
         }
         
         transaction.update(chatRef, updateData);
-        
-        return { 
-          success: true, 
-          messageId: messageRef.id,
-          chatId: chatId
-        };
+        return true;
       });
-    } catch (error) {
+      
+      return { 
+        success: true, 
+        messageId: messageRef.id,
+        chatId: chatId,
+        timestamp: Date.now() // Include timestamp for client verification
+      };
+    } catch (error: unknown) {
+      // Enhanced error logging and categorization
       logger.error(`Error sending message to chat ${chatId}:`, error);
+      
+      // Determine error type for better client handling
+      let errorCode = 'internal';
+      let errorMessage = 'Failed to send message';
+      
+      if (error instanceof functions.https.HttpsError) {
+        // Pass through existing HttpsErrors
+        throw error;
+      } else if (
+        typeof error === 'object' && 
+        error !== null && 
+        'name' in error && 
+        'code' in error
+      ) {
+        // Type assertion after verification
+        const firebaseError = error as { name: string; code: string };
+        
+        if (firebaseError.name === 'FirebaseError') {
+          switch (firebaseError.code) {
+            case 'permission-denied':
+              errorCode = 'permission-denied';
+              errorMessage = 'Permission denied: You cannot send messages to this chat';
+              break;
+            case 'not-found':
+              errorCode = 'not-found';
+              errorMessage = 'Chat no longer exists';
+              break;
+            case 'resource-exhausted':
+              errorCode = 'resource-exhausted';
+              errorMessage = 'Service temporarily unavailable. Please try again later.';
+              break;
+            case 'deadline-exceeded':
+              errorCode = 'deadline-exceeded';
+              errorMessage = 'Operation timed out. Please try again.';
+              break;
+          }
+        }
+      }
+      
       throw new functions.https.HttpsError(
-        'internal',
-        'Failed to send message',
-        error instanceof Error ? error : new Error(String(error))
+        errorCode as any,
+        errorMessage,
+        error instanceof Error ? { originalError: error.message } : undefined
       );
     }
   });
 
-// Mark chat as read - reduces read operations and handles timeouts better
+// Mark chat as read with optimized operations
 export const markChatAsRead = functions
   .runWith({
-    timeoutSeconds: 120, // Increased from 60 to 120
-    memory: '512MB',    // Increased from 256MB to 512MB
+    timeoutSeconds: 120,
+    memory: '512MB',
   })
   .https.onCall(async (data, context) => {
     if (!context.auth) {
@@ -949,5 +1056,177 @@ export const onUserDeleted = functions
       logger.info(`Successfully cleaned up chats for deleted user ${userId}`);
     } catch (error) {
       logger.error(`Error cleaning up chats for deleted user ${userId}:`, error);
+    }
+  });
+
+// Function to check if a message was deleted
+export const wasMessageDeleted = functions
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError(
+        'unauthenticated',
+        'User must be authenticated'
+      );
+    }
+    
+    const { chatId, messageId } = data;
+    const userId = context.auth.uid;
+    
+    if (!chatId || !messageId) {
+      throw new functions.https.HttpsError(
+        'invalid-argument',
+        'Chat ID and message ID are required'
+      );
+    }
+    
+    try {
+      // Verify user is a participant
+      const chatDoc = await db.collection('messages').doc(chatId).get();
+      
+      if (!chatDoc.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Chat not found'
+        );
+      }
+      
+      const chatData = chatDoc.data() as ChatDocument;
+      
+      if (!chatData.participants?.[userId] && !chatData.participantArray?.includes(userId)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Not a participant in this conversation'
+        );
+      }
+      
+      // Try to find the message in all possible collections
+      const messageCount = chatData.messageCount || 0;
+      const totalShards = Math.min(Math.floor(messageCount / SHARD_SIZE) + 1, MAX_SHARDS);
+      
+      for (let shardId = 0; shardId < totalShards; shardId++) {
+        const collectionName = getMessageCollectionName(shardId * SHARD_SIZE);
+        const messageRef = db.collection('messages')
+          .doc(chatId)
+          .collection(collectionName)
+          .doc(messageId);
+        
+        const messageDoc = await messageRef.get();
+        
+        if (messageDoc.exists) {
+          const messageData = messageDoc.data();
+          return { 
+            exists: true, 
+            deleted: messageData?.deleted === true,
+            senderId: messageData?.senderId
+          };
+        }
+      }
+      
+      // Message not found in any collection
+      return { exists: false };
+    } catch (error) {
+      logger.error(`Error checking if message ${messageId} was deleted:`, error);
+      throw new functions.https.HttpsError(
+        'internal',
+        'Failed to check message status',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+  });
+
+// Delete a message (soft delete)
+export const deleteMessage = functions
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError(
+        'unauthenticated',
+        'User must be authenticated'
+      );
+    }
+    
+    const { chatId, messageId } = data;
+    const userId = context.auth.uid;
+    
+    if (!chatId || !messageId) {
+      throw new functions.https.HttpsError(
+        'invalid-argument',
+        'Chat ID and message ID are required'
+      );
+    }
+    
+    try {
+      // Verify user is a participant
+      const chatDoc = await db.collection('messages').doc(chatId).get();
+      
+      if (!chatDoc.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Chat not found'
+        );
+      }
+      
+      const chatData = chatDoc.data() as ChatDocument;
+      
+      if (!chatData.participants?.[userId] && !chatData.participantArray?.includes(userId)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Not a participant in this conversation'
+        );
+      }
+      
+      // Find the message in the appropriate collection
+      const messageCount = chatData.messageCount || 0;
+      const totalShards = Math.min(Math.floor(messageCount / SHARD_SIZE) + 1, MAX_SHARDS);
+      
+      for (let shardId = 0; shardId < totalShards; shardId++) {
+        const collectionName = getMessageCollectionName(shardId * SHARD_SIZE);
+        const messageRef = db.collection('messages')
+          .doc(chatId)
+          .collection(collectionName)
+          .doc(messageId);
+        
+        const messageDoc = await messageRef.get();
+        
+        if (messageDoc.exists) {
+          const messageData = messageDoc.data();
+          
+          // Verify the user is the sender
+          if (messageData?.senderId !== userId) {
+            throw new functions.https.HttpsError(
+              'permission-denied',
+              'You can only delete your own messages'
+            );
+          }
+          
+          // Soft delete the message
+          await messageRef.update({
+            deleted: true,
+            content: 'This message has been deleted',
+            deletedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          
+          // If this is the last message in the chat, update the preview
+          if (chatData.lastMessage?.messageId === messageId) {
+            await db.collection('messages').doc(chatId).update({
+              'lastMessage.content': 'This message has been deleted'
+            });
+          }
+          
+          return { success: true };
+        }
+      }
+      
+      // Message not found
+      throw new functions.https.HttpsError(
+        'not-found',
+        'Message not found'
+      );
+    } catch (error) {
+      logger.error(`Error deleting message ${messageId}:`, error);
+      throw new functions.https.HttpsError(
+        'internal',
+        'Failed to delete message',
+        error instanceof Error ? error : new Error(String(error))
+      );
     }
   });

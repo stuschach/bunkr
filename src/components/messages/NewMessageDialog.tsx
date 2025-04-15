@@ -23,7 +23,7 @@ export function NewMessageDialog({
   const router = useRouter();
   const { searchUsers, startChatWithUser, isSearchingUsers } = useMessages();
   
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<SimplifiedUserProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedUserIndex, setSelectedUserIndex] = useState<number>(-1);
@@ -81,7 +81,7 @@ export function NewMessageDialog({
   }, [open]);
   
   // Handle user selection
-  const handleUserSelect = async (userId: string) => {
+  const handleUserSelect = async (userId: string): Promise<void> => {
     try {
       const chatId = await startChatWithUser(userId);
       
@@ -101,7 +101,7 @@ export function NewMessageDialog({
   };
   
   // Handle keyboard navigation
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLDivElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
@@ -119,7 +119,11 @@ export function NewMessageDialog({
         e.preventDefault();
         if (selectedUserIndex >= 0 && searchResults[selectedUserIndex]) {
           handleUserSelect(searchResults[selectedUserIndex].uid);
-        } else if (e.currentTarget === searchInputRef.current && searchQuery.trim().length >= 2) {
+        } else if (
+          e.target instanceof HTMLInputElement && 
+          e.target === searchInputRef.current && 
+          searchQuery.trim().length >= 2
+        ) {
           // If enter is pressed in the search input, select the first result if available
           if (searchResults.length > 0) {
             handleUserSelect(searchResults[0].uid);
@@ -143,94 +147,96 @@ export function NewMessageDialog({
         <DialogTitle>New Message</DialogTitle>
       </DialogHeader>
       
-      <DialogContent onKeyDown={handleKeyDown}>
-        <div className="mb-4 flex">
-          <Input
-            ref={searchInputRef}
-            placeholder="Search for users..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
-            }
-            className="flex-grow"
-            data-testid="user-search-input"
-            aria-label="Search for users"
-          />
-        </div>
-
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-sm">
-            {error}
-          </div>
-        )}
-
-        <div 
-          className="overflow-y-auto max-h-64 rounded-md"
-          role="listbox"
-          aria-label="Search results"
-        >
-          {isSearchingUsers ? (
-            <div className="flex justify-center items-center py-8">
-              <LoadingSpinner size="md" color="primary" />
-              <span className="ml-2 text-gray-500">Searching for users...</span>
-            </div>
-          ) : searchResults.length > 0 ? (
-            <ul className="divide-y divide-gray-200 dark:divide-gray-800">
-              {searchResults.map((user, index) => (
-                <li
-                  key={user.uid}
-                  onClick={() => handleUserSelect(user.uid)}
-                  className={cn(
-                    "py-3 px-2 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md cursor-pointer",
-                    selectedUserIndex === index && "bg-gray-100 dark:bg-gray-800"
-                  )}
-                  role="option"
-                  aria-selected={selectedUserIndex === index}
-                  tabIndex={0}
+      <DialogContent>
+        <div onKeyDown={handleKeyDown} className="outline-none" tabIndex={-1}>
+          <div className="mb-4 flex">
+            <Input
+              ref={searchInputRef}
+              placeholder="Search for users..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
                 >
-                  <div className="flex items-center space-x-3">
-                    <Avatar
-                      src={user.photoURL}
-                      alt={user.displayName || 'User'}
-                      size="md"
-                    />
-                    <div>
-                      <p className="font-medium">{user.displayName || 'User'}</p>
-                      {user.handicapIndex !== null && (
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          Handicap: {user.handicapIndex}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : searchQuery.trim().length >= 2 ? (
-            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-              <p>No users found matching "{searchQuery}"</p>
-              <p className="text-sm mt-2">Try a different name or search term</p>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-              <p>Search for users to message</p>
-              <p className="text-sm mt-2">Enter a name or username above (at least 2 characters)</p>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              }
+              className="flex-grow"
+              data-testid="user-search-input"
+              aria-label="Search for users"
+            />
+          </div>
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-sm">
+              {error}
             </div>
           )}
+
+          <div 
+            className="overflow-y-auto max-h-64 rounded-md"
+            role="listbox"
+            aria-label="Search results"
+          >
+            {isSearchingUsers ? (
+              <div className="flex justify-center items-center py-8">
+                <LoadingSpinner size="md" color="primary" />
+                <span className="ml-2 text-gray-500">Searching for users...</span>
+              </div>
+            ) : searchResults.length > 0 ? (
+              <ul className="divide-y divide-gray-200 dark:divide-gray-800">
+                {searchResults.map((user, index) => (
+                  <li
+                    key={user.uid}
+                    onClick={() => handleUserSelect(user.uid)}
+                    className={cn(
+                      "py-3 px-2 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md cursor-pointer",
+                      selectedUserIndex === index && "bg-gray-100 dark:bg-gray-800"
+                    )}
+                    role="option"
+                    aria-selected={selectedUserIndex === index}
+                    tabIndex={0}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Avatar
+                        src={user.photoURL}
+                        alt={user.displayName || 'User'}
+                        size="md"
+                      />
+                      <div>
+                        <p className="font-medium">{user.displayName || 'User'}</p>
+                        {user.handicapIndex !== null && (
+                          <p className="text-sm text-gray-500 dark:text-gray-400">
+                            Handicap: {user.handicapIndex}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : searchQuery.trim().length >= 2 ? (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <p>No users found matching "{searchQuery}"</p>
+                <p className="text-sm mt-2">Try a different name or search term</p>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <p>Search for users to message</p>
+                <p className="text-sm mt-2">Enter a name or username above (at least 2 characters)</p>
+              </div>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>

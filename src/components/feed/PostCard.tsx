@@ -1,368 +1,445 @@
 // src/components/feed/PostCard.tsx
-// Enhanced with deletion support
-'use client';
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, memo } from 'react';
 import Link from 'next/link';
-import { Card, CardContent, CardFooter } from '@/components/ui/Card';
+import { Card, CardHeader, CardContent, CardFooter } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
-import { Badge } from '@/components/ui/Badge';
-import { MediaGallery } from '@/components/common/media/MediaGallery';
-import { getRelativeTimeString } from '@/lib/utils/date-format';
-import { formatHandicapIndex } from '@/lib/utils/formatting';
-import { Post, Comment } from '@/types/post';
-import { 
-  addCommentToPost,
-  subscribeToComments
-} from '@/lib/firebase/feed-service';
-import { useAuth } from '@/lib/contexts/AuthContext';
-import { UserProfile } from '@/types/auth';
+import { Button } from '@/components/ui/Button';
 import { PostActions } from '@/components/common/social/PostActions';
-import { CommentSection } from '@/components/common/social/CommentSection';
+import { PostMenu } from '@/components/common/social/PostMenu';
+import { Input } from '@/components/ui/Input';
+import { format } from 'date-fns';
+import { useAuth } from '@/lib/contexts/AuthContext';
 import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
-import { PostListener } from '@/components/common/data/PostListener';
-import { PostMenu } from '@/components/common/social/PostMenu'; // Import the new PostMenu component
-import { checkPostExists } from '@/lib/firebase/feed-delete-service'; // Import the check function
+import { Post } from '@/types/post';
+import { 
+  collection, 
+  addDoc, 
+  serverTimestamp, 
+  updateDoc, 
+  increment, 
+  doc 
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase/config';
+import { useVisibilityObserver } from '@/lib/hooks/useVisibilityObserver';
 
 interface PostCardProps {
   post: Post;
-  onLike?: () => void;
-  onComment?: () => void;
-  onShare?: () => void;
-  onDelete?: (postId: string) => void; // Add deletion callback
-  extraActions?: React.ReactNode;
+  onLike: () => void;
+  onComment: () => void;
+  onShare: () => void;
+  onDelete: (postId: string) => void;
   isVisible?: boolean;
-  isLoading?: boolean;
   pendingLike?: boolean;
 }
 
-export function PostCard({ 
-  post, 
-  onLike, 
-  onComment, 
+export const PostCard = memo(({
+  post,
+  onLike,
+  onComment,
   onShare,
   onDelete,
-  extraActions, 
   isVisible = true,
-  isLoading = false,
   pendingLike = false
-}: PostCardProps) {
+}: PostCardProps) => {
   const { user } = useAuth();
-  const { notifyComment } = useNotificationCreator();
-  const [showCommentInput, setShowCommentInput] = useState(false);
+  const { notifyComment, notifyMention } = useNotificationCreator();
+  const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
-  const [comments, setComments] = useState<Comment[]>([]);
+  const [comments, setComments] = useState<any[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
-  const [showComments, setShowComments] = useState(false);
-  const [commentsSubscribed, setCommentsSubscribed] = useState(false);
-  const [isDeleted, setIsDeleted] = useState(false); // Track if post is deleted
-  const [fadeOut, setFadeOut] = useState(false); // For smooth UI transition
-
-  // Handle post deletion
-  const handlePostDeleted = () => {
-    // Begin fade out animation
-    setFadeOut(true);
-    
-    // Wait for animation to complete before removing from DOM
-    setTimeout(() => {
-      setIsDeleted(true);
-      if (onDelete) {
-        onDelete(post.id);
+  const [isPostVisible, setIsPostVisible] = useState(isVisible);
+  
+  // Format the date
+  const formatDate = useCallback((date: Date) => {
+    try {
+      return format(date, 'MMM d, yyyy • h:mm a');
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'Unknown date';
+    }
+  }, []);
+  
+  // Set up visibility observer
+  const { isElementVisible, registerElement } = useVisibilityObserver({
+    threshold: 0.3,
+    onVisibilityChange: (id, visible) => {
+      if (id === post.id) {
+        setIsPostVisible(visible);
       }
-    }, 300); // Transition duration in ms, should match CSS
-  };
-
-  // Verify post still exists
+    }
+  });
+  
+  // Register this element for visibility tracking
   useEffect(() => {
-    // If post is already marked as deleted, do nothing
-    if (isDeleted) return;
+    const element = document.getElementById(`post-${post.id}`);
+    if (element) {
+      registerElement(post.id, element);
+    }
     
-    // No need to check immediately, only for posts that linger in feed
-    const timer = setTimeout(() => {
-      // Only check if component is still mounted
-      checkPostExists(post.id)
-        .then(exists => {
-          if (!exists) {
-            handlePostDeleted();
-          }
-        })
-        .catch(err => {
-          console.error(`Error checking if post ${post.id} exists:`, err);
-        });
-    }, 60000); // Check after 1 minute
-    
-    return () => clearTimeout(timer);
-  }, [post.id, isDeleted]);
-
-  // Format post content (handle hashtags, mentions, etc.)
-  const formattedContent = post.content.replace(
-    /#(\w+)/g,
-    '<span class="text-green-500">#$1</span>'
-  );
-
-  // Convert post media to MediaGallery format
-  const mediaItems = post.media?.map(item => ({
-    id: item.id,
-    type: item.type,
-    url: item.url,
-    thumbnail: item.thumbnailUrl,
-    alt: `Media by ${post.author?.displayName || 'user'}`
-  })) || [];
-
-  // Subscribe to comments when they become visible
+    return () => {
+      registerElement(post.id, null);
+    };
+  }, [post.id, registerElement]);
+  
+  // Load comments when showing comments
   useEffect(() => {
-    // Only subscribe when comments are shown and the post is visible
-    if (showComments && isVisible && !commentsSubscribed && post.id) {
-      setLoadingComments(true);
-      setCommentsSubscribed(true);
+    if (showComments && !loadingComments && comments.length === 0) {
+      loadComments();
+    }
+  }, [showComments]);
+  
+  // Load comments for this post
+  const loadComments = async () => {
+    if (loadingComments) return;
+    
+    setLoadingComments(true);
+    
+    try {
+      // Query for comments
+      const commentsQuery = collection(db, 'posts', post.id, 'comments');
+      const commentsSnapshot = await getDocs(commentsQuery);
       
-      console.log(`Subscribing to comments for post ${post.id}`);
-      // Set up comment subscription
-      const unsubscribe = subscribeToComments(post.id, async (commentsData) => {
-        // Process comments to add author data and format dates
-        try {
-          const processedComments = await Promise.all(commentsData.map(async (comment) => {
-            // Use existing author data if available
-            if (comment.author) {
-              return {
-                ...comment,
-                createdAt: comment.createdAt?.toDate ? comment.createdAt.toDate() : new Date(comment.createdAt),
-                likedByUser: comment.likedBy?.includes(user?.uid || '') || false
-              } as Comment;
-            }
-            
-            // Fetch author data if needed
-            const authorData = await fetchUserData(comment.authorId);
-            
-            return {
-              ...comment,
-              author: authorData,
-              createdAt: comment.createdAt?.toDate ? comment.createdAt.toDate() : new Date(comment.createdAt),
-              likedByUser: comment.likedBy?.includes(user?.uid || '') || false
-            } as Comment;
-          }));
-          
-          setComments(processedComments);
-        } catch (error) {
-          console.error('Error processing comments:', error);
-        } finally {
-          setLoadingComments(false);
+      // Process comments
+      const commentsData = await Promise.all(commentsSnapshot.docs.map(async (doc) => {
+        const data = doc.data();
+        
+        // Get author data if needed
+        let author = null;
+        if (data.authorId) {
+          const authorDoc = await getDoc(doc(db, 'users', data.authorId));
+          if (authorDoc.exists()) {
+            author = {
+              uid: data.authorId,
+              displayName: authorDoc.data().displayName || 'User',
+              photoURL: authorDoc.data().photoURL || null
+            };
+          }
         }
+        
+        return {
+          id: doc.id,
+          text: data.text,
+          authorId: data.authorId,
+          author,
+          createdAt: data.createdAt?.toDate() || new Date()
+        };
+      }));
+      
+      // Sort by date (newest first)
+      commentsData.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      
+      setComments(commentsData);
+    } catch (error) {
+      console.error('Error loading comments:', error);
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+  
+  // Handle comment button click
+  const handleCommentClick = () => {
+    setShowComments(!showComments);
+    onComment();
+  };
+  
+  // Handle comment submission
+  const handleCommentSubmit = async () => {
+    if (!user || !commentText.trim() || isSubmittingComment) return;
+    
+    setIsSubmittingComment(true);
+    
+    try {
+      // Add comment to Firebase
+      const commentRef = await addDoc(collection(db, 'posts', post.id, 'comments'), {
+        authorId: user.uid,
+        text: commentText.trim(),
+        createdAt: serverTimestamp()
       });
       
-      // Clean up subscription when component unmounts or comments are hidden
-      return () => {
-        unsubscribe();
-        setCommentsSubscribed(false);
-      };
-    }
-    
-    // If comments are hidden or post is not visible, unsubscribe
-    if ((!showComments || !isVisible) && commentsSubscribed) {
-      setCommentsSubscribed(false);
-    }
-  }, [showComments, isVisible, post.id, user, commentsSubscribed]);
-
-  // Helper function to fetch user data
-  const fetchUserData = async (userId: string): Promise<UserProfile | null> => {
-    // This would be your implementation to fetch user data
-    // For now, we'll return a placeholder
-    return {
-      uid: userId,
-      displayName: 'User',
-      photoURL: '',
-      createdAt: new Date(),
-      email: null,
-      handicapIndex: null,
-      homeCourse: null,
-      profileComplete: false
-    };
-  };
-
-  // Handle comment submission
-  const handleSubmitComment = async () => {
-    if (!user || !commentText.trim() || isSubmittingComment) return;
-
-    try {
-      setIsSubmittingComment(true);
-      console.log(`Submitting comment for post ${post.id}`);
-
-      // Add comment to the post
-      await addCommentToPost(post.id, user.uid, commentText.trim());
+      // Update comment count on post
+      await updateDoc(doc(db, 'posts', post.id), {
+        comments: increment(1)
+      });
       
-      // Create a new comment object for immediate UI feedback
-      const newComment: Comment = {
-        id: 'temp-' + Date.now(), // Temporary ID until we refresh comments
-        postId: post.id,
-        authorId: user.uid,
-        author: user,
+      // Add to local comments
+      const newComment = {
+        id: commentRef.id,
         text: commentText.trim(),
-        createdAt: new Date(),
-        likes: 0,
-        likedByUser: false
+        authorId: user.uid,
+        author: {
+          uid: user.uid,
+          displayName: user.displayName,
+          photoURL: user.photoURL
+        },
+        createdAt: new Date()
       };
-
-      // Add the new comment to the state for immediate feedback
-      // Even if we're subscribed, optimistic UI is good for responsiveness
-      setComments(prevComments => [newComment, ...prevComments]);
       
-      // Reset form state
+      setComments([newComment, ...comments]);
       setCommentText('');
       
-      // Send notification to post author (if not self-commenting)
+      // Send notification if commenting on someone else's post
       if (post.authorId !== user.uid) {
-        // Determine post type for better notification message
-        const postType = post.postType === 'round' 
-          ? 'round' 
-          : post.postType === 'tee-time' 
-            ? 'tee time' 
-            : 'post';
-            
-        await notifyComment(
-          post.id,
-          post.authorId,
-          commentText.trim(),
-          post.content
-        );
+        try {
+          // Determine post type for better notification
+          let postTypeHint = "post";
+          let notificationContent = post.content || "post";
+          
+          if (post.postType === 'round') {
+            postTypeHint = "round";
+            notificationContent = `Round at ${post.courseName || 'golf course'}`;
+          } else if (post.postType === 'tee-time') {
+            postTypeHint = "tee time";
+            notificationContent = `Tee time at ${post.courseName || 'golf course'}`;
+          } else if (post.media && post.media.length > 0) {
+            postTypeHint = post.media[0].type === 'image' ? "photo" : "video";
+            notificationContent = post.content || `${post.author?.displayName || 'User'}'s ${postTypeHint}`;
+          }
+          
+          await notifyComment(post.id, post.authorId, commentText.trim(), notificationContent);
+        } catch (error) {
+          console.error('Error sending comment notification:', error);
+        }
       }
-
-      // Call the onComment callback to refresh data if needed
-      if (onComment) {
-        onComment();
+      
+      // Process @mentions in the comment
+      const mentionRegex = /@(\w+)/g;
+      let match;
+      
+      while ((match = mentionRegex.exec(commentText)) !== null) {
+        const username = match[1];
+        // Here you would need to resolve usernames to user IDs
+        // This is just a placeholder
+        try {
+          // const userId = await getUserIdByUsername(username);
+          // if (userId && userId !== user.uid && userId !== post.authorId) {
+          //   await notifyMention(userId, post.id, 'comment', commentText);
+          // }
+        } catch (error) {
+          console.error(`Error handling mention for ${username}:`, error);
+        }
       }
+      
+      // Refresh post data (call parent handler)
+      onComment();
     } catch (error) {
-      console.error('Error adding comment:', error);
+      console.error('Error submitting comment:', error);
     } finally {
       setIsSubmittingComment(false);
     }
   };
-
-  // Handle comment button click
-  const handleCommentClick = () => {
-    setShowCommentInput(!showCommentInput);
-    setShowComments(!showComments);
-    if (onComment) {
-      onComment();
+  
+  // Handle delete post
+  const handleDelete = useCallback(() => {
+    if (onDelete) {
+      onDelete(post.id);
     }
-  };
-
-  // If post is marked as deleted, don't render anything
-  if (isDeleted) {
+  }, [post.id, onDelete]);
+  
+  // Render media content 
+  const renderMedia = () => {
+    if (!post.media || post.media.length === 0) return null;
+    
+    // Only render first media item for now
+    const mediaItem = post.media[0];
+    
+    if (mediaItem.type === 'image') {
+      return (
+        <div className="mt-3 overflow-hidden rounded-lg">
+          <img 
+            src={mediaItem.url} 
+            alt="Post image" 
+            className="w-full object-cover max-h-[400px]"
+            loading="lazy"
+          />
+        </div>
+      );
+    } else if (mediaItem.type === 'video') {
+      return (
+        <div className="mt-3 overflow-hidden rounded-lg">
+          <video 
+            src={mediaItem.url} 
+            controls
+            className="w-full max-h-[400px]"
+            preload="metadata"
+          />
+        </div>
+      );
+    }
+    
     return null;
-  }
-
-  // For rendering the card contents - extracted to avoid duplication
-  const renderCardContent = (currentPost: Post, loading: boolean = false) => (
-    <>
-      <CardContent className={`pt-6 ${loading ? 'opacity-70' : ''}`}>
-        {/* Post Header with Menu */}
-        <div className="flex items-center justify-between mb-4">
-          <Link href={`/profile/${currentPost.authorId}`} className="flex items-center">
+  };
+  
+  return (
+    <Card id={`post-${post.id}`} className="mb-4 hover:shadow-md transition-shadow duration-200">
+      <CardHeader className="flex justify-between items-start space-y-0 pb-3">
+        <div className="flex space-x-3">
+          <Link href={`/profile/${post.author?.uid}`}>
             <Avatar 
-              src={currentPost.author?.photoURL || ''} 
-              alt={currentPost.author?.displayName || 'User'} 
-              size="md"
-              className="mr-3"
+              src={post.author?.photoURL} 
+              alt={post.author?.displayName || 'User'} 
+              size="md" 
             />
-            <div>
-              <div className="font-medium flex items-center">
-                {currentPost.author?.displayName || 'User'}
-                {currentPost.author?.handicapIndex !== undefined && currentPost.author?.handicapIndex !== null && (
-                  <Badge variant="outline" className="ml-2 text-xs">
-                    {formatHandicapIndex(currentPost.author.handicapIndex)}
-                  </Badge>
-                )}
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {getRelativeTimeString(currentPost.createdAt)}
-                {currentPost.location && (
-                  <> • {currentPost.location.name}</>
-                )}
-              </div>
-            </div>
           </Link>
           
-          {/* Add PostMenu component */}
-          <PostMenu post={currentPost} onDeleted={handlePostDeleted} />
-        </div>
-
-        {/* Post Content */}
-        <div 
-          className="mb-4" 
-          dangerouslySetInnerHTML={{ __html: formattedContent }}
-        />
-
-        {/* Post Media */}
-        {mediaItems.length > 0 && (
-          <div className="mb-4">
-            <MediaGallery 
-              items={mediaItems}
-              aspectRatio="16:9"
-              columns={mediaItems.length > 1 ? 2 : 1}
-            />
+          <div className="flex flex-col">
+            <Link href={`/profile/${post.author?.uid}`} className="font-medium hover:underline">
+              {post.author?.displayName || 'User'}
+            </Link>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {formatDate(post.createdAt)}
+            </span>
           </div>
+        </div>
+        
+        {user && (user.uid === post.authorId || user.isAdmin) && (
+          <PostMenu post={post} onDeleted={handleDelete} />
         )}
-
-        {/* Post Tags */}
-        {currentPost.hashtags && currentPost.hashtags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-4">
-            {currentPost.hashtags.map(tag => (
-              <Badge key={tag} variant="secondary" className="text-xs">
+      </CardHeader>
+      
+      <CardContent className="py-2">
+        {/* Post text content */}
+        <div className="whitespace-pre-wrap">{post.content}</div>
+        
+        {/* Post media */}
+        {renderMedia()}
+        
+        {/* Hashtags */}
+        {post.hashtags && post.hashtags.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {post.hashtags.map((tag, index) => (
+              <Link 
+                key={index} 
+                href={`/hashtag/${tag}`}
+                className="text-green-500 hover:text-green-600 text-sm"
+              >
                 #{tag}
-              </Badge>
+              </Link>
             ))}
           </div>
         )}
       </CardContent>
-
-      {/* Post Footer - Interactions */}
-      <CardFooter className="pt-0 pb-4 px-6 border-t border-gray-100 dark:border-gray-800 flex flex-col">
-        <PostActions
-          isLiked={currentPost.likedByUser || false}
-          likeCount={currentPost.likes || 0}
-          commentCount={currentPost.comments || 0}
-          onLike={onLike || (() => {})}
+      
+      <CardFooter className="pt-1 pb-2 flex flex-col space-y-3">
+        {/* Action buttons */}
+        <PostActions 
+          isLiked={post.likedByUser || false}
+          likeCount={post.likes || 0}
+          commentCount={post.comments || 0}
+          onLike={onLike}
           onComment={handleCommentClick}
-          onShare={onShare || (() => {})}
-          extraActions={extraActions}
-          isLoading={loading}
+          onShare={onShare}
           pendingLike={pendingLike}
         />
-
-        <CommentSection
-          currentUser={user}
-          comments={comments}
-          showComments={showComments}
-          showCommentInput={showCommentInput}
-          loadingComments={loadingComments}
-          commentText={commentText}
-          setCommentText={setCommentText}
-          setShowCommentInput={setShowCommentInput}
-          handleSubmitComment={handleSubmitComment}
-          isSubmittingComment={isSubmittingComment}
-        />
-      </CardFooter>
-    </>
-  );
-
-  // Use the PostListener for real-time updates when visible
-  // Force isVisible to true to ensure the listener stays active
-  return (
-    <Card 
-      className={`hover:shadow-md transition-all duration-300 ${fadeOut ? 'opacity-0 transform translate-y-4' : 'opacity-100'}`}
-    >
-      <PostListener 
-        postId={post.id} 
-        initialData={post} 
-        isVisible={true} // Always keep listener active
-        priority={showComments ? 8 : 5} // Give higher priority to posts with open comments
-      >
-        {(updatedPost, isLoadingData) => renderCardContent(
-          updatedPost, 
-          isLoadingData || isLoading
+        
+        {/* Comments section */}
+        {showComments && (
+          <div className="w-full mt-2">
+            {/* Comment input */}
+            {user && (
+              <div className="flex space-x-2 mb-3">
+                <Avatar 
+                  src={user.photoURL} 
+                  alt={user.displayName || 'User'} 
+                  size="sm" 
+                />
+                <div className="flex-1">
+                  <Input
+                    placeholder="Write a comment..."
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleCommentSubmit();
+                      }
+                    }}
+                    disabled={isSubmittingComment}
+                  />
+                  <div className="flex justify-end mt-1">
+                    <Button 
+                      size="sm"
+                      onClick={handleCommentSubmit}
+                      disabled={!commentText.trim() || isSubmittingComment}
+                      isLoading={isSubmittingComment}
+                    >
+                      Post
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Comments list */}
+            {loadingComments ? (
+              <div className="flex justify-center py-3">
+                <div className="animate-spin h-5 w-5 border-2 border-green-500 rounded-full border-t-transparent"></div>
+              </div>
+            ) : comments.length > 0 ? (
+              <div className="space-y-3">
+                {comments.map((comment) => (
+                  <div key={comment.id} className="flex space-x-2">
+                    <Link href={`/profile/${comment.authorId}`}>
+                      <Avatar 
+                        src={comment.author?.photoURL} 
+                        alt={comment.author?.displayName || 'User'} 
+                        size="sm" 
+                      />
+                    </Link>
+                    <div className="flex-1">
+                      <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-2">
+                        <Link 
+                          href={`/profile/${comment.authorId}`}
+                          className="font-medium text-sm hover:underline"
+                        >
+                          {comment.author?.displayName || 'User'}
+                        </Link>
+                        <div className="text-sm mt-1">{comment.text}</div>
+                      </div>
+                      <div className="flex space-x-3 text-xs text-gray-500 mt-1">
+                        <span>{format(comment.createdAt, 'MMM d, yyyy • h:mm a')}</span>
+                        <button className="hover:text-gray-700">Like</button>
+                        <button className="hover:text-gray-700">Reply</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-3 text-gray-500">
+                No comments yet. Be the first to comment!
+              </div>
+            )}
+          </div>
         )}
-      </PostListener>
+      </CardFooter>
     </Card>
   );
+});
+
+PostCard.displayName = 'PostCard';
+
+export default PostCard;
+
+// Helper function to safely get Firestore data
+async function getDocs(query: any) {
+  try {
+    return await getDocs(query);
+  } catch (error) {
+    console.error('Error in getDocs:', error);
+    return { docs: [] };
+  }
+}
+
+// Helper function to safely get a document
+async function getDoc(docRef: any) {
+  try {
+    return await getDoc(docRef);
+  } catch (error) {
+    console.error('Error in getDoc:', error);
+    return {
+      exists: () => false,
+      data: () => ({})
+    };
+  }
 }
