@@ -53,6 +53,19 @@ export interface Post {
   courseName?: string; // For tee time posts
   dateTime?: Date | null; // For tee time posts - typed more strictly now
   maxPlayers?: number; // For tee time posts
+  
+  // Fields for optimistic updates and real-time state
+  pendingLike?: boolean; // Whether there's a pending like operation
+  pendingComment?: boolean; // Whether there's a pending comment operation
+}
+
+// Partial post update interface for real-time listeners
+export interface PostUpdate {
+  id: string;
+  likes?: number;
+  comments?: number;
+  likedBy?: string[];
+  likedByUser?: boolean;
 }
 
 // Firestore-specific post type for handling timestamps
@@ -88,7 +101,24 @@ export interface FeedQueryResult {
   hasMore: boolean;
 }
 
-// Feed item in Firestore for the fanout pattern
+// Lightweight feed item in Firestore for the optimized fanout pattern
+// Only storing references and essential metadata, not full content or interaction counts
+export interface LightweightFeedItem {
+  postId: string;
+  authorId: string;
+  author: DenormalizedAuthorData; // Keep minimal author data for rendering
+  postType: string;
+  createdAt: FirebaseTimestamp | null;
+  visibility: string;
+  // Only keep metadata needed for filtering and navigation
+  roundId?: string;
+  teeTimeId?: string;
+  courseName?: string;
+  dateTime?: FirebaseTimestamp | null;
+  addedAt: FirebaseTimestamp | null;
+}
+
+// For backward compatibility - original feed item interface
 export interface FeedItem {
   postId: string;
   authorId: string;

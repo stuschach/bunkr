@@ -1,7 +1,9 @@
 // src/components/feed/TeeTimePost.tsx
+// Modified to include notifications for comments on tee time posts
+
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatDistance, format } from 'date-fns';
 import { Card, CardContent, CardFooter } from '@/components/ui/Card';
@@ -9,7 +11,24 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Heading, Text } from '@/components/ui/Typography';
-import { Post } from '@/types/post';
+import { Post, Comment } from '@/types/post';
+import { 
+  doc, 
+  addDoc, 
+  collection, 
+  serverTimestamp, 
+  updateDoc, 
+  increment, 
+  query,
+  orderBy,
+  getDocs,
+  getDoc
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase/config';
+import { useAuth } from '@/lib/contexts/AuthContext';
+import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
+import { CommentSection } from '@/components/common/social/CommentSection';
+import { PostActions } from '@/components/common/social/PostActions';
 
 interface TeeTimePostProps {
   post: Post;
@@ -58,6 +77,14 @@ export function TeeTimePost({
   onShare
 }: TeeTimePostProps) {
   const router = useRouter();
+  const { user } = useAuth();
+  const { notifyComment } = useNotificationCreator();
+  const [showCommentInput, setShowCommentInput] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [showComments, setShowComments] = useState(false);
 
   // Safely format date and time with error handling
   const getFormattedDate = () => {
@@ -90,6 +117,134 @@ export function TeeTimePost({
       console.error('Error calculating time ago:', error);
       return 'Recently';
     }
+  };
+
+  // Fetch comments when showComments is toggled on
+  useEffect(() => {
+    if (showComments && post.comments > 0) {
+      fetchComments();
+    }
+  }, [showComments, post.id, post.comments]);
+  
+  // Helper function to fetch user data for comment author
+  const fetchUserData = async (userId: string) => {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (userDoc.exists()) {
+        return { uid: userDoc.id, ...userDoc.data() };
+      }
+      return null;
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+      return null;
+    }
+  };
+
+  // Fetch comments for this post
+  const fetchComments = async () => {
+    if (loadingComments) return;
+    
+    try {
+      setLoadingComments(true);
+      
+      // Query comments for this post
+      const commentsQuery = query(
+        collection(db, 'posts', post.id, 'comments'),
+        orderBy('createdAt', 'desc')
+      );
+      
+      const commentsSnapshot = await getDocs(commentsQuery);
+      
+      // Process comments with user data
+      const commentsData = await Promise.all(commentsSnapshot.docs.map(async (doc) => {
+        const data = doc.data();
+        const author = await fetchUserData(data.authorId);
+        
+        return {
+          id: doc.id,
+          postId: post.id,
+          authorId: data.authorId,
+          author: author,
+          text: data.text,
+          createdAt: data.createdAt?.toDate() || new Date(),
+          likes: data.likes || 0,
+          likedByUser: false // Default, can be updated if needed
+        } as Comment;
+      }));
+      
+      setComments(commentsData);
+    } catch (error) {
+      console.error('Error fetching comments:', error);
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  // Handle comment submission
+  const handleSubmitComment = async () => {
+    if (!user || !commentText.trim() || isSubmittingComment) return;
+
+    try {
+      setIsSubmittingComment(true);
+
+      // Add comment to the comments subcollection
+      const commentRef = await addDoc(collection(db, 'posts', post.id, 'comments'), {
+        authorId: user.uid,
+        text: commentText.trim(),
+        createdAt: serverTimestamp(),
+        likes: 0
+      });
+
+      // Update the comment count on the post
+      await updateDoc(doc(db, 'posts', post.id), {
+        comments: increment(1)
+      });
+
+      // Create a new comment object for the UI
+      const newComment: Comment = {
+        id: commentRef.id,
+        postId: post.id,
+        authorId: user.uid,
+        author: user,
+        text: commentText.trim(),
+        createdAt: new Date(),
+        likes: 0,
+        likedByUser: false
+      };
+
+      // Add the new comment to the state
+      setComments(prevComments => [newComment, ...prevComments]);
+      
+      // Ensure comments are visible
+      setShowComments(true);
+      
+      // Reset form state
+      setCommentText('');
+      
+      // Notify the post author about the comment (if not self-commenting)
+      if (post.authorId !== user.uid) {
+        await notifyComment(
+          post.id,
+          post.authorId,
+          commentText.trim(),
+          `Tee time at ${post.courseName} on ${getFormattedDate()}`
+        );
+      }
+      
+      // Call the onComment callback
+      onComment();
+    } catch (error) {
+      console.error('Error adding comment:', error);
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
+
+  // Handle comment button click
+  const handleCommentClick = () => {
+    setShowCommentInput(!showCommentInput);
+    setShowComments(!showComments);
+    onComment();
   };
 
   const handleViewTeeTime = () => {
@@ -143,69 +298,28 @@ export function TeeTimePost({
         </div>
       </CardContent>
       
-      <CardFooter className="border-t border-gray-100 dark:border-gray-800 pt-3 pb-3">
-        <div className="flex justify-between w-full">
-          <Button
-            variant="ghost"
-            className={`${post.likedByUser ? 'text-green-500' : ''}`}
-            onClick={onLike}
-          >
-            <svg
-              className="w-5 h-5 mr-1"
-              fill={post.likedByUser ? 'currentColor' : 'none'}
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"
-              />
-            </svg>
-            {post.likes > 0 && <span>{post.likes}</span>}
-          </Button>
-          
-          <Button
-            variant="ghost"
-            onClick={onComment}
-          >
-            <svg
-              className="w-5 h-5 mr-1"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-              />
-            </svg>
-            {post.comments > 0 && <span>{post.comments}</span>}
-          </Button>
-          
-          <Button
-            variant="ghost"
-            onClick={onShare}
-          >
-            <svg
-              className="w-5 h-5 mr-1"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"
-              />
-            </svg>
-            Share
-          </Button>
-        </div>
+      <CardFooter className="flex flex-col pt-0 pb-2 border-t border-gray-100 dark:border-gray-800">
+        <PostActions
+          isLiked={post.likedByUser || false}
+          likeCount={post.likes || 0}
+          commentCount={post.comments || 0}
+          onLike={onLike}
+          onComment={handleCommentClick}
+          onShare={onShare}
+        />
+        
+        <CommentSection
+          currentUser={user}
+          comments={comments}
+          showComments={showComments}
+          showCommentInput={showCommentInput}
+          loadingComments={loadingComments}
+          commentText={commentText}
+          setCommentText={setCommentText}
+          setShowCommentInput={setShowCommentInput}
+          handleSubmitComment={handleSubmitComment}
+          isSubmittingComment={isSubmittingComment}
+        />
       </CardFooter>
     </Card>
   );

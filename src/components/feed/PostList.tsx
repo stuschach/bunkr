@@ -1,7 +1,7 @@
 // src/components/feed/VirtualizedPostList.tsx
-// Updated with infinite scroll functionality
+'use client';
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Post } from '@/types/post';
 import { PostCard } from '@/components/feed/PostCard';
 import { RoundShareCard } from '@/components/feed/RoundShareCard';
@@ -19,6 +19,8 @@ interface VirtualizedPostListProps {
   toggleLike: (postId: string, currentLikedStatus: boolean) => Promise<void>;
   handleComment: (postId: string) => void;
   handleShare: (postId: string) => void;
+  onPostVisible?: (postId: string, isVisible: boolean) => void;
+  onPostDeleted?: (postId: string) => void; // New prop for deletion handling
 }
 
 // Helper function to safely handle date objects from multiple sources
@@ -62,8 +64,12 @@ export function VirtualizedPostList({
   loadMore, 
   toggleLike, 
   handleComment, 
-  handleShare 
+  handleShare,
+  onPostVisible,
+  onPostDeleted
 }: VirtualizedPostListProps) {
+  // Track locally deleted posts to prevent UI glitches
+  const [locallyDeletedPosts, setLocallyDeletedPosts] = useState<Set<string>>(new Set());
   
   // Function to call loadMore when the sentinel becomes visible
   const handleLoadMore = useCallback(() => {
@@ -72,11 +78,32 @@ export function VirtualizedPostList({
     }
   }, [loadMore, isLoadingMore, hasMore]);
   
-  // Use our custom hook to set up the intersection observer
+  // Use our custom hook to set up the intersection observer for infinite loading
   const loadMoreRef = useFetchOnVisible(handleLoadMore, {
     threshold: 0.5,
     enabled: hasMore && !isLoadingMore
   });
+  
+  // Handle post actions
+  const handlePostLike = useCallback(async (postId: string, currentLikedStatus: boolean) => {
+    console.log(`Like clicked for post ${postId}, current status: ${currentLikedStatus}`);
+    await toggleLike(postId, currentLikedStatus);
+  }, [toggleLike]);
+  
+  // Handle post deletion
+  const handlePostDeleted = useCallback((postId: string) => {
+    // Add to local tracking set
+    setLocallyDeletedPosts(prev => {
+      const newSet = new Set(prev);
+      newSet.add(postId);
+      return newSet;
+    });
+    
+    // Propagate to parent if handler provided
+    if (onPostDeleted) {
+      onPostDeleted(postId);
+    }
+  }, [onPostDeleted]);
   
   // Show error message if there's an error
   if (error) {
@@ -111,6 +138,11 @@ export function VirtualizedPostList({
     <div className="space-y-4">
       {/* Render all posts with proper spacing and unique compound keys */}
       {posts.map((post, index) => {
+        // Skip if post was deleted locally
+        if (locallyDeletedPosts.has(post.id)) {
+          return null;
+        }
+        
         // Process post data
         const processedPost = {
           ...post,
@@ -118,10 +150,17 @@ export function VirtualizedPostList({
           dateTime: post.dateTime ? safelyGetDate(post.dateTime) : undefined
         };
         
+        // Track when posts become visible
+        const handleVisibilityChange = (isVisible: boolean) => {
+          if (onPostVisible) {
+            onPostVisible(post.id, isVisible);
+          }
+        };
+        
         // Render post based on type
-        if (post.postType === 'round' && post.roundId) {
-          return (
-            <div key={`${post.id}-${index}`} className="mb-4">
+        return (
+          <div key={`${post.id}-${index}`} className="mb-4">
+            {post.postType === 'round' && post.roundId ? (
               <RoundShareCard
                 round={processedPost}
                 user={post.author || {
@@ -136,38 +175,37 @@ export function VirtualizedPostList({
                 }}
                 postId={post.id}
                 showActions={true}
-                onLike={() => toggleLike(post.id, post.likedByUser || false)}
+                onLike={() => handlePostLike(post.id, post.likedByUser || false)}
                 onComment={() => handleComment(post.id)}
                 onShare={() => handleShare(post.id)}
+                onDelete={() => handlePostDeleted(post.id)} // Add deletion handler
                 likedByUser={post.likedByUser || false}
                 likes={post.likes || 0}
                 comments={post.comments || 0}
+                pendingLike={post.pendingLike}
               />
-            </div>
-          );
-        } else if (post.postType === 'tee-time') {
-          return (
-            <div key={`${post.id}-${index}`} className="mb-4">
+            ) : post.postType === 'tee-time' ? (
               <TeeTimePost
                 post={processedPost}
-                onLike={() => toggleLike(post.id, post.likedByUser || false)}
+                onLike={() => handlePostLike(post.id, post.likedByUser || false)}
                 onComment={() => handleComment(post.id)}
                 onShare={() => handleShare(post.id)}
+                onDelete={() => handlePostDeleted(post.id)} // Add deletion handler
+                pendingLike={post.pendingLike}
               />
-            </div>
-          );
-        } else {
-          return (
-            <div key={`${post.id}-${index}`} className="mb-4">
+            ) : (
               <PostCard
                 post={processedPost}
-                onLike={() => toggleLike(post.id, post.likedByUser || false)}
+                onLike={() => handlePostLike(post.id, post.likedByUser || false)}
                 onComment={() => handleComment(post.id)}
                 onShare={() => handleShare(post.id)}
+                onDelete={handlePostDeleted} // Add deletion handler
+                isVisible={true} // Always set to true to ensure listener stays active
+                pendingLike={post.pendingLike}
               />
-            </div>
-          );
-        }
+            )}
+          </div>
+        );
       })}
       
       {/* Loading indicator - now automatic when the sentinel is visible */}

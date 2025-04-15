@@ -38,22 +38,30 @@ export function MessageNotificationListener() {
         
         let totalUnread = 0;
         
-        // Check each chat for unread messages
+        // First check for the new unreadCounters field
         for (const chatDoc of chatsSnapshot.docs) {
-          const chatId = chatDoc.id;
+          const chatData = chatDoc.data();
           
-          // Get messages for this chat
-          const messagesQuery = collection(db, 'messages', chatId, 'thread');
-          const messagesSnapshot = await getDocs(messagesQuery);
-          
-          // Count unread messages
-          const unreadCount = messagesSnapshot.docs.filter(doc => {
-            const data = doc.data();
-            return data.senderId !== user.uid && 
-                  (!data.readBy || !data.readBy[user.uid]);
-          }).length;
-          
-          totalUnread += unreadCount;
+          // If the chat has the new unreadCounters field
+          if (chatData.unreadCounters && chatData.unreadCounters[user.uid] !== undefined) {
+            totalUnread += chatData.unreadCounters[user.uid];
+          } else {
+            // Fallback to checking each message
+            const chatId = chatDoc.id;
+            
+            // Get messages for this chat
+            const messagesCollRef = collection(db, 'messages', chatId, 'thread');
+            const messagesSnapshot = await getDocs(messagesCollRef);
+            
+            // Count unread messages
+            const unreadCount = messagesSnapshot.docs.filter(doc => {
+              const data = doc.data();
+              return data.senderId !== user.uid && 
+                    (!data.readBy || !data.readBy[user.uid]);
+            }).length;
+            
+            totalUnread += unreadCount;
+          }
         }
         
         console.log("MessageNotificationListener: Total unread messages:", totalUnread);

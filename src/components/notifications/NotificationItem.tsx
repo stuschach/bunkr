@@ -1,5 +1,5 @@
 // src/components/notifications/NotificationItem.tsx
-'use client';
+// Enhanced to display type-specific notifications
 
 import React from 'react';
 import Link from 'next/link';
@@ -58,8 +58,23 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
 
     switch (notification.type) {
       case 'like':
+        // Check for post type in the notification data
+        const postType = notification.data?.postType || 'post';
+        let likeTitle = `${name} liked your post`;
+        
+        // Customize based on post type
+        if (postType === 'round') {
+          likeTitle = `${name} liked your round post`;
+        } else if (postType === 'tee-time') {
+          likeTitle = `${name} liked your tee time post`;
+        } else if (postType === 'photo') {
+          likeTitle = `${name} liked your photo`;
+        } else if (postType === 'video') {
+          likeTitle = `${name} liked your video`;
+        }
+        
         return {
-          title: `${name} liked your post`,
+          title: likeTitle,
           subtitle: notification.data?.content,
           icon: (
             <div className="bg-red-100 dark:bg-red-800/30 text-red-500 p-2 rounded-full">
@@ -74,8 +89,23 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
           ),
         };
       case 'comment':
+        // Check for post type in the notification data
+        const commentPostType = notification.data?.postType || 'post';
+        let commentTitle = `${name} commented on your post`;
+        
+        // Customize based on post type
+        if (commentPostType === 'round') {
+          commentTitle = `${name} commented on your round post`;
+        } else if (commentPostType === 'tee-time') {
+          commentTitle = `${name} commented on your tee time post`;
+        } else if (commentPostType === 'photo') {
+          commentTitle = `${name} commented on your photo`;
+        } else if (commentPostType === 'video') {
+          commentTitle = `${name} commented on your video`;
+        }
+        
         return {
-          title: `${name} commented on your post`,
+          title: commentTitle,
           subtitle: notification.data?.content,
           icon: (
             <div className="bg-blue-100 dark:bg-blue-800/30 text-blue-500 p-2 rounded-full">

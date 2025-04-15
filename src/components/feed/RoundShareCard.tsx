@@ -1,5 +1,5 @@
 // src/components/feed/RoundShareCard.tsx
-'use client';
+// Modified to include notifications for comments on round posts
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
@@ -29,6 +29,7 @@ import { Comment, Post } from '@/types/post';
 import { PostActions } from '@/components/common/social/PostActions';
 import { CommentSection } from '@/components/common/social/CommentSection';
 import { fetchFullRoundData } from '@/lib/firebase/feed-service';
+import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
 
 interface RoundShareCardProps {
   round: Scorecard | Post;
@@ -62,6 +63,7 @@ export function RoundShareCard({
   onToggleExpand
 }: RoundShareCardProps) {
   const { user: currentUser } = useAuth();
+  const { notifyComment } = useNotificationCreator();
   const [showCommentInput, setShowCommentInput] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
@@ -84,6 +86,10 @@ export function RoundShareCard({
   
   // Extract the round ID for fetching complete data
   const roundId = isPostType ? (round as Post).roundId : (round as Scorecard).id;
+  
+  // Extract authorId safely
+  const authorId = isPostType ? (round as Post).authorId : 
+                  ('authorId' in round ? round.authorId : user.uid);
   
   // Safely extract data with fallbacks regardless of source
   const roundStats = round.stats || {};
@@ -239,6 +245,16 @@ export function RoundShareCard({
       
       // Reset form state
       setCommentText('');
+      
+      // Send notification to round post author (if not self-commenting)
+      if (authorId && authorId !== currentUser.uid) {
+        await notifyComment(
+          postId,
+          authorId,
+          commentText.trim(),
+          `Round at ${courseName} (${totalScore})`
+        );
+      }
 
       // Call the onComment callback to refresh data if needed
       if (onComment) {

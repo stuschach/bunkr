@@ -14,58 +14,116 @@ service cloud.firestore {
       return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
     
-    function isValidUserData(data) {
-      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt']) &&
-        (data.displayName is string) &&
-        (data.email is string) &&
-        (data.uid is string) &&
-        (data.handicapIndex == null || data.handicapIndex is number) &&
-        (data.homeCourse == null || data.homeCourse is string) &&
-        (data.profileComplete is bool);
+    // MESSAGES SECTION - UPDATED WITH IMPROVED RULES
+    // Messages with support for sharded collections
+    match /messages/{chatId} {
+      // Helper function to check if user is a participant
+      function isParticipant(chatId, userId) {
+        return get(/databases/$(database)/documents/messages/$(chatId)).data.participants[userId] == true || 
+               get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([userId]);
+      }
+      
+      // Allow reading if user is a participant
+      allow read: if isSignedIn() && (
+        resource.data.participants[request.auth.uid] == true ||
+        resource.data.participantArray.hasAny([request.auth.uid])
+      );
+      
+      // Allow creation with proper participant data
+      allow create: if isSignedIn() && 
+        request.resource.data.participants[request.auth.uid] == true &&
+        request.resource.data.participantArray.hasAny([request.auth.uid]);
+      
+      // Allow updates to specific fields
+      allow update: if isSignedIn() && 
+        (resource.data.participants[request.auth.uid] == true ||
+         resource.data.participantArray.hasAny([request.auth.uid])) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessage', 'updatedAt', 'title', 'isGroupChat', 'participantArray',
+          'participants', 'unreadCounters', 'messageCount', 'archivedBy'
+        ]);
+      
+      // Regular thread collection
+      match /thread/{messageId} {
+        allow read: if isSignedIn() && isParticipant(chatId, request.auth.uid);
+          
+        allow create: if isSignedIn() && 
+          isParticipant(chatId, request.auth.uid) &&
+          request.resource.data.senderId == request.auth.uid;
+          
+        allow update: if isSignedIn() && 
+          isParticipant(chatId, request.auth.uid) &&
+          (
+            (resource.data.senderId == request.auth.uid && 
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'content'])) ||
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
+          );
+          
+        allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
+      }
+      
+      // Wildcard rule for all sharded thread collections using pattern matching
+      match /{threadCollection}/{messageId} {
+        allow read: if isSignedIn() && 
+          isParticipant(chatId, request.auth.uid) && 
+          threadCollection.matches('thread_[0-9]+');
+          
+        allow create: if isSignedIn() && 
+          isParticipant(chatId, request.auth.uid) &&
+          request.resource.data.senderId == request.auth.uid &&
+          threadCollection.matches('thread_[0-9]+');
+          
+        allow update: if isSignedIn() && 
+          isParticipant(chatId, request.auth.uid) &&
+          threadCollection.matches('thread_[0-9]+') &&
+          (
+            (resource.data.senderId == request.auth.uid && 
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'content'])) ||
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
+          );
+          
+        allow delete: if isSignedIn() && 
+          resource.data.senderId == request.auth.uid && 
+          threadCollection.matches('thread_[0-9]+');
+      }
     }
     
-    // USER FEEDS - NEW COLLECTION FOR FEED FANOUT PATTERN
+    // USER FEEDS
     match /feeds/{userId}/posts/{postId} {
-      // Allow users to read their own feed
-      allow read: if isOwner(userId);
+      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
       
-      // Allow creation in another user's feed if:
-      // 1. The user is authenticated
-      // 2. The post references an existing post
-      // 3. The post has the correct author ID in it (cannot fake authorship)
       allow create: if isSignedIn() && 
                      exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)) &&
                      request.resource.data.authorId == 
                      get(/databases/$(database)/documents/posts/$(request.resource.data.postId)).data.authorId;
       
-      // Allow updates only for specific fields (like updating like counts, etc.)
       allow update: if isSignedIn() && 
                      request.resource.data.diff(resource.data).affectedKeys()
                        .hasOnly(['likes', 'comments', 'likedByUser']);
       
-      // Allow authors to delete their post from all feeds
-      allow delete: if isSignedIn() && 
-                     get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.authorId == request.auth.uid;
+      allow delete: if isSignedIn() && (
+                     (exists(/databases/$(database)/documents/posts/$(resource.data.postId)) && 
+                      get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.authorId == request.auth.uid) ||
+                     isOwner(userId) ||
+                     !exists(/databases/$(database)/documents/posts/$(resource.data.postId)) ||
+                     (exists(/databases/$(database)/documents/posts/$(resource.data.postId)) &&
+                      get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.isDeleted == true)
+                    );
     }
     
-    // User profiles - secure user data
+    // User profiles
     match /users/{userId} {
-      // Allow read if signed in
       allow read: if isSignedIn();
       
-      // Allow creation if the UID matches the authenticated user
       allow create: if isSignedIn() && 
                     request.auth.uid == userId && 
                     request.resource.data.uid == userId;
       
-      // Allow updates if they own the document
-      // OR if only updating allowed fields (unreadNotifications, followerCount, followingCount, or notificationPreferences)
       allow update: if isSignedIn() && (
         isOwner(userId) || 
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadNotifications', 'notificationPreferences', 'followerCount', 'followingCount'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadNotifications', 'notificationPreferences', 'followerCount', 'followingCount', 'displayNameLower'])
       );
       
-      // Only allow admins to delete user documents
       allow delete: if isAdmin();
       
       // User's rounds/scorecards
@@ -80,39 +138,26 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
       
-      // User's connections (followers/following) - FIXED RULES
+      // User's connections (followers/following)
       match /connections/{connectionId} {
-        // Always allow reading connections if signed in
         allow read: if isSignedIn();
         
-        // CREATE rules - explicitly separated for clarity
         allow create: if isSignedIn() && (
-          // Creating a connection in your own collection
           isOwner(userId) || 
-          
-          // Creating a follower record in someone else's collection
           (connectionId == ('follower_' + request.auth.uid) && 
            request.resource.data.userId == request.auth.uid &&
            request.resource.data.type == 'follower')
         );
         
-        // UPDATE rules
         allow update: if isSignedIn() && (
-          // Updating your own connection
           isOwner(userId) || 
-          
-          // Updating a follower record in someone else's collection
           (connectionId == ('follower_' + request.auth.uid) &&
            request.resource.data.userId == request.auth.uid &&
            request.resource.data.type == 'follower')
         );
         
-        // DELETE rules
         allow delete: if isSignedIn() && (
-          // Deleting from your own collection
           isOwner(userId) || 
-          
-          // Deleting your follower record from someone else's collection
           connectionId == ('follower_' + request.auth.uid)
         );
       }
@@ -135,46 +180,43 @@ service cloud.firestore {
       }
     }
     
-    // Follow records collection - for tracking follow relationships
+    // Follow records collection
     match /followRecords/{recordId} {
-      // Allow read if signed in
       allow read: if isSignedIn();
-      
-      // Allow write if the record ID contains your user ID as the follower
       allow write: if isSignedIn() && recordId.matches(request.auth.uid + '_.*');
     }
     
-    // Handicap records - UPDATED RULE
+    // Handicap records
     match /handicapRecords/{recordId} {
-      // Allow users to read their own handicap records
       allow read: if isSignedIn() && (
-        // Either it's their own record (recordId starts with userId_)
         recordId.matches(request.auth.uid + '_.*') ||
-        // OR it's a document containing their user ID in the userId field
         resource.data.userId == request.auth.uid ||
-        // Or they're an admin
         isAdmin()
       );
       
-      // For writes, maintain the stricter rule
       allow write: if isSignedIn() && (
-        // Must be their own handicap record with proper ID format
         recordId.matches(request.auth.uid + '_.*') ||
-        // Or they're an admin
         isAdmin()
       );
+    }
+    
+    // Deletion Records
+    match /deletedContent/{recordId} {
+      allow create: if isSignedIn() && 
+                     (request.resource.data.authorId == request.auth.uid || isAdmin());
+      
+      allow read: if isSignedIn() && 
+                   (resource.data.authorId == request.auth.uid || isAdmin());
+      
+      allow update, delete: if isAdmin();
     }
     
     // Notifications
     match /notifications/{notificationId} {
-      // Allow read if the notification belongs to the authenticated user
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
       
-      // Allow create by any authenticated user (for system-generated notifications)
       allow create: if isSignedIn() && (
-        // Regular user-generated notification
         (request.resource.data.actorId == request.auth.uid) ||
-        // System notification (actorId = 'system')
         (request.resource.data.actorId == 'system' && 
          (request.resource.data.type == 'handicap-updated' || 
           request.resource.data.type == 'tournament-update' || 
@@ -182,11 +224,13 @@ service cloud.firestore {
           request.resource.data.type == 'course-review'))
       );
       
-      // Allow update if the notification belongs to the authenticated user
       allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
       
-      // Allow delete if the notification belongs to the authenticated user
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow delete: if isSignedIn() && 
+                     resource.data.entityType == 'post' && 
+                     !exists(/databases/$(database)/documents/posts/$(resource.data.entityId));
     }
     
     // Tournaments
@@ -230,29 +274,36 @@ service cloud.firestore {
       }
     }
     
-    // Public posts/feed
+    // POSTS
     match /posts/{postId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+      
       allow update: if isSignedIn() && (
-        // Full update by owner
         (resource.data.authorId == request.auth.uid) || 
-        // Or just updating allowed fields by any signed-in user
         (request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likes', 'comments', 'likedBy', 'content', 'updatedAt', 'courseName', 'dateTime', 'maxPlayers', 'postType', 'teeTimeId', 'status', 'visibility']))
+          .hasOnly(['likes', 'comments', 'likedBy', 'content', 'updatedAt', 'courseName', 'dateTime', 'maxPlayers', 'postType', 'teeTimeId', 'status', 'visibility', 'author', 'isDeleted', 'deletedAt', 'moderationReason']))
       );
-      allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      
+      allow delete: if isSignedIn() && (resource.data.authorId == request.auth.uid || isAdmin());
       
       // Comments on posts
       match /comments/{commentId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
-        allow update: if isSignedIn() && resource.data.authorId == request.auth.uid;
-        allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+        allow update: if isSignedIn() && (
+          resource.data.authorId == request.auth.uid ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy'])
+        );
+        allow delete: if isSignedIn() && (
+          resource.data.authorId == request.auth.uid || 
+          get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid ||
+          isAdmin()
+        );
       }
     }
     
-    // Scorecards - can be shared as posts
+    // Scorecards
     match /scorecards/{scorecardId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
@@ -274,22 +325,19 @@ service cloud.firestore {
       }
     }
     
-    // Golf courses (public data)
+    // Golf courses
     match /courses/{courseId} {
       allow read: if isSignedIn();
       
-      // NEW RULES: Allow any signed-in user to create a course
       allow create: if isSignedIn() && 
                      request.resource.data.createdBy == request.auth.uid &&
                      request.resource.data.nameTokens is list;
       
-      // Allow creators to update their own courses or admins to update any
       allow update: if isSignedIn() && (
         resource.data.createdBy == request.auth.uid || 
         isAdmin()
       );
       
-      // Only admins can delete courses
       allow delete: if isAdmin();
       
       // Course reviews
@@ -299,7 +347,7 @@ service cloud.firestore {
         allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
       }
       
-      // Course tee boxes - NEW SUBCOLLECTION
+      // Course tee boxes
       match /teeBoxes/{teeBoxId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && (
@@ -316,7 +364,7 @@ service cloud.firestore {
         );
       }
       
-      // Course holes data - NEW SUBCOLLECTION
+      // Course holes data
       match /holes/{holeId} {
         allow read: if isSignedIn();
         allow create, update: if isSignedIn() && (
@@ -359,9 +407,8 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.creatorId == request.auth.uid;
       allow update: if isSignedIn() && (
         resource.data.creatorId == request.auth.uid || 
-        // Allow updating player counts and status by server functions
         (request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['currentPlayers', 'status', 'updatedAt']))
+          .hasOnly(['currentPlayers', 'status', 'updatedAt', 'isDeleted', 'deletedAt']))
       );
       allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
       
@@ -385,7 +432,6 @@ service cloud.firestore {
     
     // Tee Time Invitations
     match /tee-time-invitations/{invitationId} {
-      // Allow read by the inviter or invited user
       allow read: if isSignedIn() && (
         resource.data.invitedBy == request.auth.uid ||
         resource.data.invitedUserId == request.auth.uid
@@ -404,81 +450,18 @@ service cloud.firestore {
     
     // Marketplace listings
     match /marketplace/{listingId} {
-      // Allow reading for any signed-in user
       allow read: if isSignedIn();
       
-      // Allow creation if the user is the seller
       allow create: if isSignedIn() && request.resource.data.sellerId == request.auth.uid;
       
-      // Allow updates by seller OR for incrementing view count
       allow update: if isSignedIn() && (
-        // Owner can update everything
         resource.data.sellerId == request.auth.uid ||
-        
-        // Any signed-in user can update view count and savedBy array
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'saves', 'savedBy']) ||
-        
-        // Only changing the status to 'sold'
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
          request.resource.data.status == 'sold')
       );
       
-      // Only seller can delete their listing
       allow delete: if isSignedIn() && resource.data.sellerId == request.auth.uid;
-    }
-    
-    // Messages
-    match /messages/{chatId} {
-      // Base chat rules
-      allow create: if isSignedIn() && 
-                     request.resource.data.participants[request.auth.uid] == true &&
-                     request.resource.data.participantArray is list &&
-                     request.resource.data.participantArray.hasAny([request.auth.uid]);
-      
-      // Allow reads if user is in participants map or participantArray
-      allow read: if isSignedIn() && 
-                   (resource.data.participants[request.auth.uid] == true ||
-                    resource.data.participantArray.hasAny([request.auth.uid]));
-      
-      // Allow updates to specific fields
-      allow update: if isSignedIn() && 
-                     (resource.data.participants[request.auth.uid] == true ||
-                      resource.data.participantArray.hasAny([request.auth.uid])) &&
-                     request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                       'lastMessage', 'updatedAt', 'title', 'isGroupChat', 'participantArray'
-                     ]);
-      
-      // Individual messages in thread
-      match /thread/{messageId} {
-        // Allow read by any chat participant
-        allow read: if isSignedIn() && 
-                     (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
-                      get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid]));
-        
-        // Allow create if user is a participant and they are the sender
-        allow create: if isSignedIn() && 
-                       (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
-                        get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid])) &&
-                       request.resource.data.senderId == request.auth.uid;
-        
-        // Allow updates only for readBy field or soft delete
-        allow update: if isSignedIn() && 
-                       (get(/databases/$(database)/documents/messages/$(chatId)).data.participants[request.auth.uid] == true ||
-                        get(/databases/$(database)/documents/messages/$(chatId)).data.participantArray.hasAny([request.auth.uid])) &&
-                       (
-                         // Allow sender to soft delete their own message
-                         (resource.data.senderId == request.auth.uid && 
-                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'content'])) ||
-                         
-                         // Allow any participant to mark as read
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                           'readBy'
-                         ])
-                       );
-        
-        // Hard delete limited to sender only
-        allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
-      }
     }
     
     // System collections (admin only)

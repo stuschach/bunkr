@@ -1,4 +1,6 @@
 // src/lib/hooks/useNotificationCreator.ts
+// Enhanced to provide more tailored notification messages
+
 import { useCallback } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { 
@@ -42,6 +44,9 @@ export function useNotificationCreator() {
       const notificationsCollection = collection(db, 'notifications');
       const notificationRef = doc(notificationsCollection);
       
+      // Check if data exists, if not create an empty object
+      const safeData = data || {};
+      
       // Add notification to batch
       batch.set(notificationRef, {
         userId: recipientId,
@@ -51,7 +56,7 @@ export function useNotificationCreator() {
         actorId: user.uid,
         isRead: false,
         createdAt: serverTimestamp(),
-        data: data || {},
+        data: safeData,
         priority
       });
       
@@ -71,6 +76,10 @@ export function useNotificationCreator() {
       // Try the fallback approach if batch update fails (might be missing user document)
       try {
         console.log('Batch update failed, trying direct notification creation');
+        
+        // Ensure we have a valid data object to prevent undefined fields
+        const safeData = data || {};
+        
         const notificationData = {
           userId: recipientId,
           type,
@@ -79,7 +88,7 @@ export function useNotificationCreator() {
           actorId: user.uid,
           isRead: false,
           createdAt: serverTimestamp(),
-          data: data || {},
+          data: safeData,
           priority
         };
         
@@ -97,15 +106,33 @@ export function useNotificationCreator() {
   const notifyLike = useCallback(async (
     postId: string, 
     authorId: string, 
-    postSnippet?: string
+    postContent?: string
   ) => {
+    // Extract post type hint if available (added to postContent by the caller)
+    let postTypeHint = "post";
+    
+    // Check if postContent contains a post type hint
+    if (postContent?.includes("Round at")) {
+      postTypeHint = "round";
+    } else if (postContent?.includes("Tee time at")) {
+      postTypeHint = "tee time";
+    } else if (postContent?.toLowerCase().includes("photo")) {
+      postTypeHint = "photo";
+    } else if (postContent?.toLowerCase().includes("video")) {
+      postTypeHint = "video";
+    }
+    
+    // Create safe content that won't be undefined
+    const safeContent = postContent || "";
+    
     return sendNotification(
       authorId,
       'like',
       postId,
       'post',
       {
-        content: postSnippet ? (postSnippet.substring(0, 100) + (postSnippet.length > 100 ? '...' : '')) : undefined
+        content: safeContent.substring(0, 100) + (safeContent.length > 100 ? '...' : ''),
+        postType: postTypeHint // Include post type hint for notification rendering
       }
     );
   }, [sendNotification]);
@@ -114,16 +141,35 @@ export function useNotificationCreator() {
     postId: string,
     authorId: string,
     commentText: string,
-    postSnippet?: string
+    postContent?: string
   ) => {
+    // Extract post type hint if available (added to postContent by the caller)
+    let postTypeHint = "post";
+    
+    // Check if postContent contains a post type hint
+    if (postContent?.includes("Round at")) {
+      postTypeHint = "round";
+    } else if (postContent?.includes("Tee time at")) {
+      postTypeHint = "tee time";
+    } else if (postContent?.toLowerCase().includes("photo")) {
+      postTypeHint = "photo";
+    } else if (postContent?.toLowerCase().includes("video")) {
+      postTypeHint = "video";
+    }
+    
+    // Create safe content that won't be undefined
+    const safePostContent = postContent || "";
+    const safeCommentText = commentText || "";
+    
     return sendNotification(
       authorId,
       'comment',
       postId,
       'post',
       {
-        content: commentText.substring(0, 100) + (commentText.length > 100 ? '...' : ''),
-        postContent: postSnippet ? (postSnippet.substring(0, 100) + (postSnippet.length > 100 ? '...' : '')) : undefined
+        content: safeCommentText.substring(0, 100) + (safeCommentText.length > 100 ? '...' : ''),
+        postContent: safePostContent.substring(0, 100) + (safePostContent.length > 100 ? '...' : ''),
+        postType: postTypeHint // Include post type hint for notification rendering
       }
     );
   }, [sendNotification]);

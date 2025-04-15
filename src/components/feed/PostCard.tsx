@@ -1,4 +1,5 @@
 // src/components/feed/PostCard.tsx
+// Enhanced with deletion support
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -7,43 +8,92 @@ import { Card, CardContent, CardFooter } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { MediaGallery } from '@/components/common/media/MediaGallery';
-import { formatHandicapIndex } from '@/lib/utils/formatting';
 import { getRelativeTimeString } from '@/lib/utils/date-format';
+import { formatHandicapIndex } from '@/lib/utils/formatting';
 import { Post, Comment } from '@/types/post';
 import { 
-  doc, 
-  addDoc, 
-  collection, 
-  serverTimestamp, 
-  updateDoc, 
-  increment, 
-  query,
-  orderBy,
-  getDocs,
-  getDoc,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+  addCommentToPost,
+  subscribeToComments
+} from '@/lib/firebase/feed-service';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { UserProfile } from '@/types/auth';
 import { PostActions } from '@/components/common/social/PostActions';
 import { CommentSection } from '@/components/common/social/CommentSection';
+import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
+import { PostListener } from '@/components/common/data/PostListener';
+import { PostMenu } from '@/components/common/social/PostMenu'; // Import the new PostMenu component
+import { checkPostExists } from '@/lib/firebase/feed-delete-service'; // Import the check function
 
 interface PostCardProps {
   post: Post;
   onLike?: () => void;
   onComment?: () => void;
   onShare?: () => void;
+  onDelete?: (postId: string) => void; // Add deletion callback
   extraActions?: React.ReactNode;
+  isVisible?: boolean;
+  isLoading?: boolean;
+  pendingLike?: boolean;
 }
 
-export function PostCard({ post, onLike, onComment, onShare, extraActions }: PostCardProps) {
+export function PostCard({ 
+  post, 
+  onLike, 
+  onComment, 
+  onShare,
+  onDelete,
+  extraActions, 
+  isVisible = true,
+  isLoading = false,
+  pendingLike = false
+}: PostCardProps) {
   const { user } = useAuth();
+  const { notifyComment } = useNotificationCreator();
   const [showCommentInput, setShowCommentInput] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [commentsSubscribed, setCommentsSubscribed] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false); // Track if post is deleted
+  const [fadeOut, setFadeOut] = useState(false); // For smooth UI transition
+
+  // Handle post deletion
+  const handlePostDeleted = () => {
+    // Begin fade out animation
+    setFadeOut(true);
+    
+    // Wait for animation to complete before removing from DOM
+    setTimeout(() => {
+      setIsDeleted(true);
+      if (onDelete) {
+        onDelete(post.id);
+      }
+    }, 300); // Transition duration in ms, should match CSS
+  };
+
+  // Verify post still exists
+  useEffect(() => {
+    // If post is already marked as deleted, do nothing
+    if (isDeleted) return;
+    
+    // No need to check immediately, only for posts that linger in feed
+    const timer = setTimeout(() => {
+      // Only check if component is still mounted
+      checkPostExists(post.id)
+        .then(exists => {
+          if (!exists) {
+            handlePostDeleted();
+          }
+        })
+        .catch(err => {
+          console.error(`Error checking if post ${post.id} exists:`, err);
+        });
+    }, 60000); // Check after 1 minute
+    
+    return () => clearTimeout(timer);
+  }, [post.id, isDeleted]);
 
   // Format post content (handle hashtags, mentions, etc.)
   const formattedContent = post.content.replace(
@@ -60,65 +110,74 @@ export function PostCard({ post, onLike, onComment, onShare, extraActions }: Pos
     alt: `Media by ${post.author?.displayName || 'user'}`
   })) || [];
 
-  // Fetch comments when showComments is toggled on
+  // Subscribe to comments when they become visible
   useEffect(() => {
-    if (showComments && post.comments > 0) {
-      fetchComments();
-    }
-  }, [showComments, post.id, post.comments]);
-  
-  // Helper function to fetch user data for comment author
-  const fetchUserData = async (userId: string): Promise<UserProfile | null> => {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      if (userDoc.exists()) {
-        return { uid: userDoc.id, ...userDoc.data() } as UserProfile;
-      }
-      return null;
-    } catch (error) {
-      console.error('Error fetching user data:', error);
-      return null;
-    }
-  };
-
-  // Fetch comments for this post
-  const fetchComments = async () => {
-    if (loadingComments) return;
-    
-    try {
+    // Only subscribe when comments are shown and the post is visible
+    if (showComments && isVisible && !commentsSubscribed && post.id) {
       setLoadingComments(true);
+      setCommentsSubscribed(true);
       
-      // Query comments for this post
-      const commentsQuery = query(
-        collection(db, 'posts', post.id, 'comments'),
-        orderBy('createdAt', 'desc')
-      );
+      console.log(`Subscribing to comments for post ${post.id}`);
+      // Set up comment subscription
+      const unsubscribe = subscribeToComments(post.id, async (commentsData) => {
+        // Process comments to add author data and format dates
+        try {
+          const processedComments = await Promise.all(commentsData.map(async (comment) => {
+            // Use existing author data if available
+            if (comment.author) {
+              return {
+                ...comment,
+                createdAt: comment.createdAt?.toDate ? comment.createdAt.toDate() : new Date(comment.createdAt),
+                likedByUser: comment.likedBy?.includes(user?.uid || '') || false
+              } as Comment;
+            }
+            
+            // Fetch author data if needed
+            const authorData = await fetchUserData(comment.authorId);
+            
+            return {
+              ...comment,
+              author: authorData,
+              createdAt: comment.createdAt?.toDate ? comment.createdAt.toDate() : new Date(comment.createdAt),
+              likedByUser: comment.likedBy?.includes(user?.uid || '') || false
+            } as Comment;
+          }));
+          
+          setComments(processedComments);
+        } catch (error) {
+          console.error('Error processing comments:', error);
+        } finally {
+          setLoadingComments(false);
+        }
+      });
       
-      const commentsSnapshot = await getDocs(commentsQuery);
-      
-      // Process comments with user data
-      const commentsData = await Promise.all(commentsSnapshot.docs.map(async (doc) => {
-        const data = doc.data();
-        const author = await fetchUserData(data.authorId);
-        
-        return {
-          id: doc.id,
-          postId: post.id,
-          authorId: data.authorId,
-          author: author,
-          text: data.text,
-          createdAt: data.createdAt?.toDate() || new Date(),
-          likes: data.likes || 0,
-          likedByUser: false // Default, can be updated if needed
-        } as Comment;
-      }));
-      
-      setComments(commentsData);
-    } catch (error) {
-      console.error('Error fetching comments:', error);
-    } finally {
-      setLoadingComments(false);
+      // Clean up subscription when component unmounts or comments are hidden
+      return () => {
+        unsubscribe();
+        setCommentsSubscribed(false);
+      };
     }
+    
+    // If comments are hidden or post is not visible, unsubscribe
+    if ((!showComments || !isVisible) && commentsSubscribed) {
+      setCommentsSubscribed(false);
+    }
+  }, [showComments, isVisible, post.id, user, commentsSubscribed]);
+
+  // Helper function to fetch user data
+  const fetchUserData = async (userId: string): Promise<UserProfile | null> => {
+    // This would be your implementation to fetch user data
+    // For now, we'll return a placeholder
+    return {
+      uid: userId,
+      displayName: 'User',
+      photoURL: '',
+      createdAt: new Date(),
+      email: null,
+      handicapIndex: null,
+      homeCourse: null,
+      profileComplete: false
+    };
   };
 
   // Handle comment submission
@@ -127,23 +186,14 @@ export function PostCard({ post, onLike, onComment, onShare, extraActions }: Pos
 
     try {
       setIsSubmittingComment(true);
+      console.log(`Submitting comment for post ${post.id}`);
 
-      // Add comment to the comments subcollection
-      const commentRef = await addDoc(collection(db, 'posts', post.id, 'comments'), {
-        authorId: user.uid,
-        text: commentText.trim(),
-        createdAt: serverTimestamp(),
-        likes: 0
-      });
-
-      // Update the comment count on the post
-      await updateDoc(doc(db, 'posts', post.id), {
-        comments: increment(1)
-      });
-
-      // Create a new comment object for the UI
+      // Add comment to the post
+      await addCommentToPost(post.id, user.uid, commentText.trim());
+      
+      // Create a new comment object for immediate UI feedback
       const newComment: Comment = {
-        id: commentRef.id,
+        id: 'temp-' + Date.now(), // Temporary ID until we refresh comments
         postId: post.id,
         authorId: user.uid,
         author: user,
@@ -153,17 +203,29 @@ export function PostCard({ post, onLike, onComment, onShare, extraActions }: Pos
         likedByUser: false
       };
 
-      // Add the new comment to the state
+      // Add the new comment to the state for immediate feedback
+      // Even if we're subscribed, optimistic UI is good for responsiveness
       setComments(prevComments => [newComment, ...prevComments]);
-      
-      // Ensure comments are visible
-      setShowComments(true);
       
       // Reset form state
       setCommentText('');
       
-      // Update the post's comment count in the local state
-      post.comments += 1;
+      // Send notification to post author (if not self-commenting)
+      if (post.authorId !== user.uid) {
+        // Determine post type for better notification message
+        const postType = post.postType === 'round' 
+          ? 'round' 
+          : post.postType === 'tee-time' 
+            ? 'tee time' 
+            : 'post';
+            
+        await notifyComment(
+          post.id,
+          post.authorId,
+          commentText.trim(),
+          post.content
+        );
+      }
 
       // Call the onComment callback to refresh data if needed
       if (onComment) {
@@ -185,35 +247,44 @@ export function PostCard({ post, onLike, onComment, onShare, extraActions }: Pos
     }
   };
 
-  return (
-    <Card className="hover:shadow-md transition-shadow duration-200">
-      <CardContent className="pt-6">
-        {/* Post Header */}
-        <div className="flex items-center mb-4">
-          <Link href={`/profile/${post.authorId}`} className="flex items-center">
+  // If post is marked as deleted, don't render anything
+  if (isDeleted) {
+    return null;
+  }
+
+  // For rendering the card contents - extracted to avoid duplication
+  const renderCardContent = (currentPost: Post, loading: boolean = false) => (
+    <>
+      <CardContent className={`pt-6 ${loading ? 'opacity-70' : ''}`}>
+        {/* Post Header with Menu */}
+        <div className="flex items-center justify-between mb-4">
+          <Link href={`/profile/${currentPost.authorId}`} className="flex items-center">
             <Avatar 
-              src={post.author?.photoURL || ''} 
-              alt={post.author?.displayName || 'User'} 
+              src={currentPost.author?.photoURL || ''} 
+              alt={currentPost.author?.displayName || 'User'} 
               size="md"
               className="mr-3"
             />
             <div>
               <div className="font-medium flex items-center">
-                {post.author?.displayName || 'User'}
-                {post.author?.handicapIndex !== undefined && post.author?.handicapIndex !== null && (
+                {currentPost.author?.displayName || 'User'}
+                {currentPost.author?.handicapIndex !== undefined && currentPost.author?.handicapIndex !== null && (
                   <Badge variant="outline" className="ml-2 text-xs">
-                    {formatHandicapIndex(post.author.handicapIndex)}
+                    {formatHandicapIndex(currentPost.author.handicapIndex)}
                   </Badge>
                 )}
               </div>
               <div className="text-xs text-gray-500 dark:text-gray-400">
-                {getRelativeTimeString(post.createdAt)}
-                {post.location && (
-                  <> • {post.location.name}</>
+                {getRelativeTimeString(currentPost.createdAt)}
+                {currentPost.location && (
+                  <> • {currentPost.location.name}</>
                 )}
               </div>
             </div>
           </Link>
+          
+          {/* Add PostMenu component */}
+          <PostMenu post={currentPost} onDeleted={handlePostDeleted} />
         </div>
 
         {/* Post Content */}
@@ -233,22 +304,10 @@ export function PostCard({ post, onLike, onComment, onShare, extraActions }: Pos
           </div>
         )}
 
-        {/* Round Data (if post type is round) */}
-        {post.postType === 'round' && post.roundId && (
-          <div className="bg-gray-50 dark:bg-gray-800 rounded-md p-3 mb-4">
-            <div className="text-sm font-medium mb-1">
-              Round at {post.location?.name || post.courseName}
-            </div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">
-              Click to see full scorecard
-            </div>
-          </div>
-        )}
-
         {/* Post Tags */}
-        {post.hashtags && post.hashtags.length > 0 && (
+        {currentPost.hashtags && currentPost.hashtags.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-4">
-            {post.hashtags.map(tag => (
+            {currentPost.hashtags.map(tag => (
               <Badge key={tag} variant="secondary" className="text-xs">
                 #{tag}
               </Badge>
@@ -260,13 +319,15 @@ export function PostCard({ post, onLike, onComment, onShare, extraActions }: Pos
       {/* Post Footer - Interactions */}
       <CardFooter className="pt-0 pb-4 px-6 border-t border-gray-100 dark:border-gray-800 flex flex-col">
         <PostActions
-          isLiked={post.likedByUser || false}
-          likeCount={post.likes || 0}
-          commentCount={post.comments || 0}
+          isLiked={currentPost.likedByUser || false}
+          likeCount={currentPost.likes || 0}
+          commentCount={currentPost.comments || 0}
           onLike={onLike || (() => {})}
           onComment={handleCommentClick}
           onShare={onShare || (() => {})}
           extraActions={extraActions}
+          isLoading={loading}
+          pendingLike={pendingLike}
         />
 
         <CommentSection
@@ -282,6 +343,26 @@ export function PostCard({ post, onLike, onComment, onShare, extraActions }: Pos
           isSubmittingComment={isSubmittingComment}
         />
       </CardFooter>
+    </>
+  );
+
+  // Use the PostListener for real-time updates when visible
+  // Force isVisible to true to ensure the listener stays active
+  return (
+    <Card 
+      className={`hover:shadow-md transition-all duration-300 ${fadeOut ? 'opacity-0 transform translate-y-4' : 'opacity-100'}`}
+    >
+      <PostListener 
+        postId={post.id} 
+        initialData={post} 
+        isVisible={true} // Always keep listener active
+        priority={showComments ? 8 : 5} // Give higher priority to posts with open comments
+      >
+        {(updatedPost, isLoadingData) => renderCardContent(
+          updatedPost, 
+          isLoadingData || isLoading
+        )}
+      </PostListener>
     </Card>
   );
 }

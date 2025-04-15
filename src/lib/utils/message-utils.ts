@@ -1,114 +1,162 @@
-// src/lib/utils/message-utils.ts
-import { format, formatDistanceToNow } from 'date-fns';
+/**
+ * Utility functions for messages
+ */
+import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 import { Chat } from '@/types/messages';
+import { TIME_FORMATS } from '@/lib/constants';
+import { safeTimestampToDate } from './timestamp-utils';
+import { Timestamp } from 'firebase/firestore';
 
-// Format time for message display
-export const formatMessageTime = (timestamp: any): string => {
+/**
+ * Format a timestamp for display in the message thread
+ */
+export function formatMessageTime(timestamp: Date | Timestamp | any): string {
   if (!timestamp) {
-    return 'Just now';
+    return '';
   }
   
-  try {
-    const date = timestamp instanceof Date 
-      ? timestamp 
-      : timestamp.toDate?.() || new Date();
-    
-    return format(date, 'h:mm a');
-  } catch (error) {
-    return 'Just now';
+  // Convert to Date if it's a Timestamp
+  const date = timestamp instanceof Date ? timestamp : safeTimestampToDate(timestamp);
+  
+  if (!date) {
+    return '';
   }
-};
+  
+  return format(date, TIME_FORMATS.MESSAGE);
+}
 
-// Format time for chat list display
-export const formatChatListTime = (timestamp: any): string => {
+/**
+ * Format a timestamp for display in the chat list
+ */
+export function formatChatListTime(timestamp: Date | Timestamp | any): string {
   if (!timestamp) {
-    return 'Just now';
+    return '';
   }
   
-  try {
-    const date = timestamp instanceof Date 
-      ? timestamp 
-      : timestamp.toDate?.() || new Date();
-    
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    
-    if (date >= today) {
-      return format(date, 'h:mm a'); // Today: show time
-    } else if (date >= yesterday) {
-      return 'Yesterday'; // Yesterday: show "Yesterday"
-    } else {
-      return format(date, 'MMM d'); // Earlier: show date
-    }
-  } catch (error) {
-    return 'Just now';
+  // Convert to Date if it's a Timestamp
+  const date = timestamp instanceof Date ? timestamp : safeTimestampToDate(timestamp);
+  
+  if (!date) {
+    return '';
   }
-};
+  
+  if (isToday(date)) {
+    return format(date, TIME_FORMATS.CHAT_LIST);
+  } else if (isYesterday(date)) {
+    return 'Yesterday';
+  } else {
+    // For older dates, show the date
+    return format(date, TIME_FORMATS.CHAT_LIST_OLDER);
+  }
+}
 
-// Get chat name based on participants
-export const getChatName = (chat: Chat, currentUserId: string): string => {
-  if (chat.title) {
-    return chat.title; // Use title for group chats
+/**
+ * Check if the last message in a chat was sent by the current user
+ */
+export function isLastMessageFromCurrentUser(chat: Chat, userId: string): boolean {
+  if (!chat || !chat.lastMessage || !userId) {
+    return false;
   }
   
-  // Get the other participant
-  const otherParticipant = getOtherParticipant(chat, currentUserId);
-  
-  if (otherParticipant) {
-    return otherParticipant.displayName || 'Unknown User';
-  }
-  
-  return 'Chat';
-};
+  return chat.lastMessage.senderId === userId;
+}
 
-// Get chat avatar for display
-export const getChatAvatar = (chat: Chat, currentUserId: string): string | null => {
-  if (chat.isGroupChat) {
-    return null; // Group chats don't have avatars
+/**
+ * Truncate a message to a max length, adding ellipsis if needed
+ */
+export function truncateMessage(message: string, maxLength: number = 50): string {
+  if (!message) {
+    return '';
   }
-  
-  // Get the other participant
-  const otherParticipant = getOtherParticipant(chat, currentUserId);
-  
-  if (otherParticipant) {
-    return otherParticipant.photoURL;
-  }
-  
-  return null;
-};
-
-// Get the other participant in a one-on-one chat
-export const getOtherParticipant = (chat: Chat, currentUserId: string) => {
-  if (!chat.participantProfiles) return null;
-  
-  // Get all participants
-  const otherParticipantIds = Object.keys(chat.participants || {})
-    .filter(id => id !== currentUserId);
-  
-  // Return the first other participant (only one in one-on-one chats)
-  if (otherParticipantIds.length > 0) {
-    return chat.participantProfiles[otherParticipantIds[0]];
-  }
-  
-  return null;
-};
-
-// Check if the last message is from the current user
-export const isLastMessageFromCurrentUser = (chat: Chat, currentUserId: string): boolean => {
-  if (!chat.lastMessage) return false;
-  
-  return chat.lastMessage.senderId === currentUserId;
-};
-
-// Truncate message text for preview
-export const truncateMessage = (message: string, maxLength: number): string => {
-  if (!message) return '';
   
   if (message.length <= maxLength) {
     return message;
   }
   
   return message.substring(0, maxLength) + '...';
-};
+}
+
+/**
+ * Get a formatted date string for message date dividers
+ */
+export function formatMessageDateDivider(date: Date): string {
+  if (!date) {
+    return '';
+  }
+  
+  if (isToday(date)) {
+    return 'Today';
+  } else if (isYesterday(date)) {
+    return 'Yesterday';
+  } else {
+    return format(date, TIME_FORMATS.MESSAGE_DATE_DIVIDER);
+  }
+}
+
+/**
+ * Get the time difference between now and a timestamp in a readable format
+ * e.g. "2 hours ago", "3 days ago", etc.
+ */
+export function getTimeAgo(timestamp: Date | Timestamp | any): string {
+  if (!timestamp) {
+    return '';
+  }
+  
+  // Convert to Date if it's a Timestamp
+  const date = timestamp instanceof Date ? timestamp : safeTimestampToDate(timestamp);
+  
+  if (!date) {
+    return '';
+  }
+  
+  return formatDistanceToNow(date, { addSuffix: true });
+}
+
+/**
+ * Check if a message is unread by a specific user
+ */
+export function isMessageUnread(message: any, userId: string): boolean {
+  if (!message || !userId) {
+    return false;
+  }
+  
+  // If readBy doesn't exist or user isn't in readBy, message is unread
+  return !message.readBy || !message.readBy[userId];
+}
+
+/**
+ * Sort messages by timestamp in ascending order (oldest first)
+ */
+export function sortMessagesByTimestamp(messages: any[]): any[] {
+  if (!messages || !Array.isArray(messages)) {
+    return [];
+  }
+  
+  return [...messages].sort((a, b) => {
+    const aTime = safeTimestampToDate(a.createdAt)?.getTime() || 0;
+    const bTime = safeTimestampToDate(b.createdAt)?.getTime() || 0;
+    return aTime - bTime;
+  });
+}
+
+/**
+ * Sort chats by last message timestamp in descending order (newest first)
+ */
+export function sortChatsByRecency(chats: Chat[]): Chat[] {
+  if (!chats || !Array.isArray(chats)) {
+    return [];
+  }
+  
+  return [...chats].sort((a, b) => {
+    // Get last message timestamp or use updatedAt as fallback
+    const aLastMessageTime = a.lastMessage?.createdAt 
+      ? safeTimestampToDate(a.lastMessage.createdAt)?.getTime() 
+      : safeTimestampToDate(a.updatedAt)?.getTime() || 0;
+      
+    const bLastMessageTime = b.lastMessage?.createdAt 
+      ? safeTimestampToDate(b.lastMessage.createdAt)?.getTime() 
+      : safeTimestampToDate(b.updatedAt)?.getTime() || 0;
+    
+    return bLastMessageTime - aLastMessageTime;
+  });
+}

@@ -10,6 +10,7 @@ import { NotificationProvider } from '@/lib/contexts/NotificationContext';
 import { ResponsiveProvider } from '@/lib/contexts/ResponsiveContext';
 import { UserPreferencesProvider } from '@/lib/contexts/UserPreferencesContext';
 import { FollowProvider } from '@/lib/contexts/FollowContext';
+import { VisibilityProvider } from '@/lib/contexts/VisibilityContext';
 
 interface ApiProvidersProps {
   children: React.ReactNode;
@@ -27,7 +28,9 @@ export const ApiProviders: React.FC<ApiProvidersProps> = ({ children }) => {
             <FollowProvider>
               <ResponsiveProvider>
                 <UserPreferencesProvider>
-                  {children}
+                  <VisibilityProvider>
+                    {children}
+                  </VisibilityProvider>
                 </UserPreferencesProvider>
               </ResponsiveProvider>
             </FollowProvider>
