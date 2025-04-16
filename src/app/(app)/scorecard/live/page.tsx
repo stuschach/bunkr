@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
 import { LiveScorecard } from '@/components/scorecard/LiveScoring/LiveScorecard';
@@ -15,6 +15,8 @@ import { TeeBox } from '@/types/scorecard';
 
 export default function LiveScoringPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const scorecardId = searchParams ? searchParams.get('id') : null;
   const { user, loading } = useAuth();
   const [isSetupComplete, setIsSetupComplete] = useState<boolean>(false);
   const [initialData, setInitialData] = useState<{
@@ -30,7 +32,12 @@ export default function LiveScoringPage() {
       router.push('/login?returnUrl=/scorecard/live');
       return;
     }
-  }, [user, loading, router]);
+    
+    // If we have a scorecard ID in the URL, go straight to the scorecard
+    if (scorecardId) {
+      setIsSetupComplete(true);
+    }
+  }, [user, loading, router, scorecardId]);
 
   const handleCourseSelected = (course: { id: string; name: string; par: number }) => {
     setInitialData((prev) => ({
@@ -69,6 +76,15 @@ export default function LiveScoringPage() {
 
   if (!user) {
     return null; // Redirect is handled in the useEffect
+  }
+
+  // If we have a scorecard ID, skip the setup
+  if (scorecardId) {
+    return (
+      <div className="p-0">
+        <LiveScorecard scorecardId={scorecardId} />
+      </div>
+    );
   }
 
   if (!isSetupComplete) {
@@ -135,9 +151,7 @@ export default function LiveScoringPage() {
   return (
     <div className="p-0">
       {initialData && (
-        <LiveScorecard 
-          initialData={initialData}
-        />
+        <LiveScorecard initialData={initialData} />
       )}
     </div>
   );

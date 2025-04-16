@@ -33,5 +33,13 @@ export {
   updateNotificationMetrics
 } from './notification.functions';
 
+// Export scorecard functions
+export {
+  onScorecardUpdated,
+  scheduledHandicapUpdate,
+  onPostDeleted as onPostDeletedScorecard,
+  handicapFunctions
+} from './scorecard.functions';
+
 // Log initialization
 logger.info('Firebase Functions initialized');

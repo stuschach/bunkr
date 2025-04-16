@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import { doc, updateDoc, collection, getDocs, writeBatch, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 import { Dialog, DialogHeader, DialogTitle, DialogContent, DialogFooter } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
@@ -42,7 +42,7 @@ export function CourseSetupModal({
   onComplete
 }: CourseSetupModalProps) {
   const { user } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   
   const [step, setStep] = useState<'teeBoxes' | 'holeData' | 'review'>('teeBoxes');
   const [isLoading, setIsLoading] = useState<boolean>(false);

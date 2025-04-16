@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { doc, getDoc, updateDoc, collection, getDocs, query, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 import { Dialog, DialogHeader, DialogTitle, DialogContent, DialogFooter } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -46,7 +46,7 @@ export function CourseEditModal({
   onComplete
 }: CourseEditModalProps) {
   const { user } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   
   const [step, setStep] = useState<'basic' | 'teeBoxes' | 'holeData' | 'review'>('basic');
   const [isLoading, setIsLoading] = useState<boolean>(false);

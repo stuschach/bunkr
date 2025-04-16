@@ -19,15 +19,18 @@ interface TeeBoxFormProps {
   onChange: (teeBoxes: TeeBox[]) => void;
 }
 
-// Common tee box colors/options
+// Common color options with corresponding names
 const commonTeeOptions = [
   { name: 'Championship', color: 'black' },
   { name: 'Blue', color: 'blue' },
   { name: 'White', color: 'white' },
   { name: 'Gold', color: 'gold' },
-  { name: 'Yellow', color: 'yellow' }, // Added yellow tees
+  { name: 'Yellow', color: 'yellow' },
   { name: 'Red', color: 'red' },
   { name: 'Green', color: 'green' },
+  { name: 'Purple', color: 'purple' },
+  { name: 'Orange', color: 'orange' },
+  { name: 'Gray', color: 'gray' },
 ];
 
 export function TeeBoxForm({ teeBoxes, onChange }: TeeBoxFormProps) {
@@ -35,7 +38,7 @@ export function TeeBoxForm({ teeBoxes, onChange }: TeeBoxFormProps) {
   const addTeeBox = () => {
     // Find a tee box option that isn't being used
     const unusedOption = commonTeeOptions.find(option => 
-      !teeBoxes.some(teeBox => teeBox.name === option.name)
+      !teeBoxes.some(teeBox => teeBox.color === option.color)
     );
     
     // Create a new tee box
@@ -54,10 +57,30 @@ export function TeeBoxForm({ teeBoxes, onChange }: TeeBoxFormProps) {
   // Update a tee box
   const updateTeeBox = (index: number, field: keyof TeeBox, value: any) => {
     const updatedTeeBoxes = [...teeBoxes];
-    updatedTeeBoxes[index] = {
-      ...updatedTeeBoxes[index],
-      [field]: value
-    };
+    
+    // If updating color, also update the name based on the color
+    if (field === 'color') {
+      const matchingTee = commonTeeOptions.find(option => option.color === value);
+      if (matchingTee) {
+        updatedTeeBoxes[index] = {
+          ...updatedTeeBoxes[index],
+          color: value,
+          name: matchingTee.name
+        };
+      } else {
+        updatedTeeBoxes[index] = {
+          ...updatedTeeBoxes[index],
+          color: value,
+          name: 'Custom'
+        };
+      }
+    } else {
+      updatedTeeBoxes[index] = {
+        ...updatedTeeBoxes[index],
+        [field]: value
+      };
+    }
+    
     onChange(updatedTeeBoxes);
   };
   
@@ -73,7 +96,7 @@ export function TeeBoxForm({ teeBoxes, onChange }: TeeBoxFormProps) {
       <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md text-sm">
         <p>Add tee boxes for your golf course. Each tee box should include:</p>
         <ul className="list-disc ml-5 mt-2 text-gray-600 dark:text-gray-400">
-          <li>Name/color (e.g., Blue, White, Red)</li>
+          <li>Color (e.g., Blue, White, Red)</li>
           <li>Course rating (typically between 65-75)</li>
           <li>Slope rating (typically between 100-155)</li>
           <li>Total yardage</li>
@@ -99,44 +122,22 @@ export function TeeBoxForm({ teeBoxes, onChange }: TeeBoxFormProps) {
             )}
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-4 mb-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Tee Name
-              </label>
-              <select
-                value={teeBox.name}
-                onChange={(e) => updateTeeBox(index, 'name', e.target.value)}
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-              >
-                {commonTeeOptions.map(option => (
-                  <option key={option.name} value={option.name}>
-                    {option.name}
-                  </option>
-                ))}
-                <option value="Custom">Custom</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Color
+                Tee Color
               </label>
               <select
                 value={teeBox.color}
                 onChange={(e) => updateTeeBox(index, 'color', e.target.value)}
                 className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
               >
-                <option value="black">Black</option>
-                <option value="blue">Blue</option>
-                <option value="white">White</option>
-                <option value="gold">Gold</option>
-                <option value="yellow">Yellow</option>
-                <option value="red">Red</option>
-                <option value="green">Green</option>
-                <option value="purple">Purple</option>
-                <option value="orange">Orange</option>
-                <option value="gray">Gray</option>
+                {commonTeeOptions.map(option => (
+                  <option key={option.color} value={option.color}>
+                    {option.name} ({option.color})
+                  </option>
+                ))}
+                <option value="custom">Custom</option>
               </select>
             </div>
           </div>

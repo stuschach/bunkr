@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 import { CourseSetupModal } from './CourseSetupModal';
 import { CourseEditModal } from './CourseEditModal';
 import { formatLocationString, parseLocationString } from '@/lib/utils/location-formatter';
@@ -35,7 +35,7 @@ export function CourseSelector({
   initialCourseName 
 }: CourseSelectorProps) {
   const { user } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   const [searchText, setSearchText] = useState<string>('');
   const [courses, setCourses] = useState<CourseData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);

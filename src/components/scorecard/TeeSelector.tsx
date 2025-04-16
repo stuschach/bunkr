@@ -2,12 +2,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
 import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
-import { TeeBox } from '@/types/scorecard';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { TeeBox } from '@/types/course';
+import { useCourseTeeBoxes } from '@/lib/hooks/useCourse';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 
 interface TeeSelectorProps {
   onTeeSelected: (teeBox: TeeBox) => void;
@@ -27,104 +26,50 @@ const commonTeeOptions = [
 ];
 
 export function TeeSelector({ onTeeSelected, initialTeeBox, courseId }: TeeSelectorProps) {
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   
   const [teeBox, setTeeBox] = useState<TeeBox>(initialTeeBox || {
     name: 'White',
     rating: 72.0,
     slope: 113,
-    yardage: 6200
+    yardage: 6200,
+    color: 'white' // Fixed the missing required color property
   });
   
-  // State for course tee boxes
-  const [courseTeeBoxes, setCourseTeeBoxes] = useState<TeeBox[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Fetch tee boxes for the course if courseId is provided
+  // Use our custom hook to get tee boxes
+  const { teeBoxes: unsortedTeeBoxes, isLoading: isLoadingTeeBoxes, error: teeBoxError } = useCourseTeeBoxes(courseId);
+  
+  // Sort tee boxes by yardage in descending order
+  const teeBoxes = [...unsortedTeeBoxes].sort((a, b) => b.yardage - a.yardage);
+  
+  // When tee boxes load, select the first one or use the initial tee box
   useEffect(() => {
-    if (!courseId) return;
-    
-    const fetchCourseTeeBoxes = async () => {
-      setIsLoading(true);
-      setError(null);
-      
-      try {
-        console.log(`Fetching tee boxes for course: ${courseId}`);
-        
-        // First, check if the course exists and is properly set up
-        const courseRef = doc(db, 'courses', courseId);
-        const courseDoc = await getDoc(courseRef);
-        
-        if (!courseDoc.exists()) {
-          console.error(`Course with ID ${courseId} does not exist`);
-          setError('Course not found');
-          setIsLoading(false);
-          return;
-        }
-        
-        const courseData = courseDoc.data();
-        console.log('Course data:', courseData);
-        
-        // Fetch tee boxes from the subcollection
-        const teeBoxesRef = collection(db, 'courses', courseId, 'teeBoxes');
-        const teeBoxesSnapshot = await getDocs(query(teeBoxesRef));
-        
-        console.log(`Found ${teeBoxesSnapshot.size} tee boxes for course ${courseId}`);
-        
-        if (!teeBoxesSnapshot.empty) {
-          const teeBoxes = teeBoxesSnapshot.docs.map(doc => {
-            const data = doc.data();
-            console.log(`Tee box ${doc.id}:`, data);
-            
-            return {
-              id: doc.id,
-              name: data.name || 'Unknown',
-              color: data.color || '',
-              rating: data.rating || 72.0,
-              slope: data.slope || 113,
-              yardage: data.yardage || 6200
-            };
-          });
-          
-          setCourseTeeBoxes(teeBoxes);
-          
-          // If we have tee boxes and no initial tee box was provided,
-          // select the first one
-          if (teeBoxes.length > 0 && (!initialTeeBox || !initialTeeBox.id)) {
-            const firstTeeBox = teeBoxes[0];
-            console.log('Auto-selecting tee box:', firstTeeBox);
-            setTeeBox(firstTeeBox);
-            onTeeSelected(firstTeeBox);
-          }
-        } else {
-          console.log(`No tee boxes found for course: ${courseId}`);
-          
-          // If the course is marked as complete but has no tee boxes, show a notification
-          if (courseData.isComplete) {
-            setError('This course is missing tee box information');
-            showNotification({
-              type: 'warning',
-              title: 'Course Data Issue',
-              description: 'This course is marked as complete but has no tee box information'
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching course tee boxes:', error);
-        setError('Failed to load tee boxes');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    fetchCourseTeeBoxes();
-  }, [courseId, initialTeeBox, onTeeSelected, showNotification]);
+    if (teeBoxes.length > 0 && (!initialTeeBox || !initialTeeBox.id)) {
+      const firstTeeBox = teeBoxes[0];
+      console.log('Auto-selecting tee box:', firstTeeBox);
+      setTeeBox(firstTeeBox);
+      onTeeSelected(firstTeeBox);
+    }
+  }, [teeBoxes, initialTeeBox, onTeeSelected]);
+  
+  // Show notification if there's an error
+  useEffect(() => {
+    if (teeBoxError) {
+      setError('Failed to load tee boxes');
+      showNotification({
+        type: 'warning',
+        title: 'Course Data Issue',
+        description: 'Failed to load tee boxes for this course'
+      });
+    }
+  }, [teeBoxError, showNotification]);
   
   // Handle tee name selection
   const handleSelectTee = (teeName: string) => {
     // Try to find the selected tee in the course tee boxes
-    const selectedTeeBox = courseTeeBoxes.find(tb => tb.name === teeName);
+    const selectedTeeBox = teeBoxes.find(tb => tb.name === teeName);
     
     if (selectedTeeBox) {
       // Use the course tee box
@@ -183,7 +128,7 @@ export function TeeSelector({ onTeeSelected, initialTeeBox, courseId }: TeeSelec
           Tee Box
         </label>
         
-        {isLoading ? (
+        {isLoadingTeeBoxes ? (
           <div className="flex justify-center py-4">
             <LoadingSpinner size="sm" color="primary" />
           </div>
@@ -194,10 +139,10 @@ export function TeeSelector({ onTeeSelected, initialTeeBox, courseId }: TeeSelec
           </div>
         ) : null}
         
-        {courseTeeBoxes.length > 0 ? (
-          // Course has tee boxes - show them
+        {teeBoxes.length > 0 ? (
+          // Course has tee boxes - show them sorted by yardage
           <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-            {courseTeeBoxes.map((tb) => (
+            {teeBoxes.map((tb) => (
               <button
                 key={tb.id}
                 type="button"
@@ -211,11 +156,12 @@ export function TeeSelector({ onTeeSelected, initialTeeBox, courseId }: TeeSelec
                 onClick={() => handleSelectTee(tb.name)}
               >
                 {tb.name}
+                <div className="text-xs opacity-75">{tb.yardage} yds</div>
               </button>
             ))}
           </div>
         ) : (
-          // No course tee boxes - show defaults
+          // No course tee boxes - show default options
           <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
             {commonTeeOptions.map((tee) => (
               <button
