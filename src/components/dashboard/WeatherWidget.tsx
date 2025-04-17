@@ -202,7 +202,7 @@ const WeatherWidgetComponent = ({ className, compact = false }: WeatherWidgetPro
   }, [updateLocation]);
 
   // Function to get location name from coordinates
-  const getLocationNameFromCoords = async (latitude, longitude) => {
+  const getLocationNameFromCoords = async (latitude: number, longitude: number) => {
     try {
       // Using BigDataCloud's free reverse geocoding API
       const response = await fetch(

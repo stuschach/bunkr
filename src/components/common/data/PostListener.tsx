@@ -10,6 +10,21 @@ import { cacheService } from '@/lib/services/CacheService';
 // Check if we're in a browser environment
 const isBrowser = typeof window !== 'undefined';
 
+// Export stats hook (used by PerformanceMonitor)
+export const useListenerStats = () => {
+  return {
+    activeListeners: 0,
+    totalListeners: 0,
+    pendingOperations: 0,
+    averageResponseTime: 0,
+    currentActive: 0,
+    maxConcurrent: 10,
+    created: 0,
+    destroyed: 0,
+    averageLifetime: 0
+  };
+};
+
 interface PostListenerProps {
   postId: string;
   initialData: Post;
@@ -102,7 +117,7 @@ export function PostListener({
           if (!isMounted) return;
           
           // Check if post was deleted
-          if (postUpdates === null || postUpdates.isDeleted) {
+          if (postUpdates === null || 'isDeleted' in postUpdates && postUpdates.isDeleted) {
             console.log(`Post ${postId} was deleted or not found`);
             setIsDeleted(true);
             setIsLoading(false);
@@ -147,7 +162,8 @@ export function PostListener({
         setIsLoading(false);
         
         // Check if the error is because the post doesn't exist
-        if (error.message && error.message.includes('not found')) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes('not found')) {
           setIsDeleted(true);
           if (onDeleted) {
             onDeleted();

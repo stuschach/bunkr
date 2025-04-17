@@ -17,10 +17,7 @@ import {
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { Chat, Message } from '@/types/messages';
-import { getCacheService } from '@/lib/services/CacheService';
-
-// Initialize cache service
-const cacheService = getCacheService();
+import { cacheService } from '@/lib/services/CacheService';
 
 export function useMessages() {
   const { user, loading: authLoading } = useAuth();

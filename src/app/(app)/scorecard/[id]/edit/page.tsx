@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 
 import { ScorecardForm } from '@/components/scorecard/ScorecardForm';
 import { Button } from '@/components/ui/Button';
@@ -17,7 +17,7 @@ export default function EditScorecardPage() {
   const params = useParams();
   const router = useRouter();
   const { user, loading } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

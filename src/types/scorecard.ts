@@ -47,6 +47,7 @@ export interface ScorecardStats {
   fairwaysTotal: number;         // Total number of fairways (excludes par 3s)
   greensInRegulation: number;    // Number of greens hit in regulation
   penalties: number;             // Total penalty strokes
+  averageDrivingDistance?: number; // Average driving distance
   eagles?: number;               // Number of eagles (-2)
   birdies?: number;              // Number of birdies (-1)
   pars?: number;                 // Number of pars (E)
@@ -75,6 +76,9 @@ export type ScorecardState = 'draft' | 'live' | 'completed' | 'archived';
  * Complete scorecard data structure
  */
 export interface Scorecard {
+  // Offline-specific properties
+  _offlineUpdatedAt?: number;
+  _isOffline?: boolean;
   id: string;                    // Unique identifier
   userId: string;                // User who owns the scorecard
   courseId: string;              // Course ID

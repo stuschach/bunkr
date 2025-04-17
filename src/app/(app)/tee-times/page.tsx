@@ -23,8 +23,11 @@ import {
   Search,
   MapPin,
   Filter,
-  ChevronDown
+  ChevronDown,
+  AlertCircle,
+  Mail
 } from 'lucide-react';
+import { DocumentSnapshot } from 'firebase/firestore';
 
 export default function TeeTimes() {
   const router = useRouter();
@@ -34,7 +37,10 @@ export default function TeeTimes() {
     error, 
     getPublicTeeTimesList, 
     getUserProfile,
-    joinTeeTime 
+    getUsersByIds, // Added for batch loading of profiles
+    joinTeeTime,
+    pendingOperations,
+    showToast
   } = useTeeTime();
   
   // State
@@ -43,25 +49,30 @@ export default function TeeTimes() {
   const [filters, setFilters] = useState<TeeTimeFilters>({
     status: 'open',
     date: null,
+    showInvitedOnly: false
   });
-  const [lastVisible, setLastVisible] = useState<any>(null);
+  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [joinRequestLoading, setJoinRequestLoading] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [view, setView] = useState<'grid' | 'list'>('grid');
+  const [initialLoading, setInitialLoading] = useState(true);
   
-  // Load tee times
+  // Load tee times with optimized profile fetching
   const fetchTeeTimes = useCallback(async (reset: boolean = false) => {
     try {
-      const newFilters = reset ? { status: 'open', date: null } : filters;
-      const lastVisibleDoc = reset ? null : lastVisible;
+      const newFilters = reset ? { status: 'open' as 'open', date: null } : filters;
+      const currentLastVisible = reset ? null : lastVisible;
       
       if (reset) {
         setFilters(newFilters);
+        setInitialLoading(true);
+      } else {
+        setLoadingMore(true);
       }
       
-      const result = await getPublicTeeTimesList(newFilters, lastVisibleDoc);
+      // FIXED: Now properly handles the paginated response
+      const result = await getPublicTeeTimesList(newFilters, currentLastVisible);
       
       if (reset) {
         setTeeTimes(result.teeTimes);
@@ -72,26 +83,29 @@ export default function TeeTimes() {
       setLastVisible(result.lastVisible);
       setHasMore(result.teeTimes.length === 10); // Assuming 10 is the page size
       
-      // Fetch creator profiles
+      // OPTIMIZED: Fetch creator profiles in batch
       const creatorIds = result.teeTimes.map(teeTime => teeTime.creatorId);
       const uniqueCreatorIds = [...new Set(creatorIds)];
       
-      const creatorProfiles: {[key: string]: UserProfile | null} = {};
-      await Promise.all(
-        uniqueCreatorIds.map(async (creatorId) => {
-          if (!creators[creatorId]) {
-            const profile = await getUserProfile(creatorId);
-            creatorProfiles[creatorId] = profile;
-          }
-        })
-      );
-      
-      setCreators(prev => ({ ...prev, ...creatorProfiles }));
-      
+      if (uniqueCreatorIds.length > 0) {
+        // Use batch loading instead of individual requests
+        const profiles = await getUsersByIds(uniqueCreatorIds);
+        
+        // Update creators state
+        const creatorProfiles: Record<string, UserProfile | null> = {};
+        Object.entries(profiles).forEach(([id, profile]) => {
+          creatorProfiles[id] = profile;
+        });
+        
+        setCreators(prev => ({ ...prev, ...creatorProfiles }));
+      }
     } catch (error) {
       console.error('Error fetching tee times:', error);
+    } finally {
+      setInitialLoading(false);
+      setLoadingMore(false);
     }
-  }, [filters, lastVisible, getPublicTeeTimesList, getUserProfile, creators]);
+  }, [filters, lastVisible, getPublicTeeTimesList, getUsersByIds]);
   
   // Load initial tee times
   useEffect(() => {
@@ -108,25 +122,60 @@ export default function TeeTimes() {
   const handleLoadMore = async () => {
     if (loadingMore || !hasMore) return;
     
-    setLoadingMore(true);
-    await fetchTeeTimes();
-    setLoadingMore(false);
+    await fetchTeeTimes(false);
   };
   
-  // Handle join request
+  // Helper to check if current user is invited to a tee time
+  const isUserInvited = (teeTime: TeeTime): boolean => {
+    if (!user) return false;
+    
+    // Check if user is already a player in this tee time
+    return !!teeTime.players?.some(
+      player => player.userId === user.uid && 
+      player.status === 'pending' && 
+      player.requestType === 'invitation'
+    );
+  };
+  
+  // Helper to check if current user is already a part of a tee time
+  const isUserPartOfTeeTime = (teeTime: TeeTime): boolean => {
+    if (!user) return false;
+    
+    // Check if user is already a player in this tee time
+    return !!teeTime.players?.some(
+      player => player.userId === user.uid && 
+      (player.status === 'confirmed' || player.status === 'pending')
+    );
+  };
+  
+  // IMPROVED: Better join request handling with validation and error handling
   const handleJoinRequest = async (teeTimeId: string) => {
     if (!user) {
       router.push('/login?returnUrl=/tee-times');
       return;
     }
     
-    setJoinRequestLoading(teeTimeId);
+    // Find the tee time
+    const teeTime = teeTimes.find(tt => tt.id === teeTimeId);
+    if (!teeTime) return;
+    
+    // Check if user is already part of this tee time
+    if (isUserPartOfTeeTime(teeTime)) {
+      // Show info toast
+      showToast({
+        title: 'Already Joined',
+        description: 'You are already part of this tee time',
+        variant: 'info'
+      });
+      return;
+    }
     
     try {
+      // Use the context function
       const success = await joinTeeTime(teeTimeId);
       
       if (success) {
-        // Update the tee time in the list to show as joined
+        // Optimistically update the UI
         setTeeTimes(prev => prev.map(teeTime => {
           if (teeTime.id === teeTimeId) {
             return {
@@ -137,17 +186,20 @@ export default function TeeTimes() {
                   userId: user.uid,
                   status: 'pending',
                   joinedAt: new Date(),
+                  requestType: 'join_request'
                 }
               ]
             };
           }
           return teeTime;
         }));
+        
+        // Success toast already shown by the context
       }
     } catch (error) {
       console.error('Error joining tee time:', error);
-    } finally {
-      setJoinRequestLoading(null);
+      
+      // Error toast already shown by the context
     }
   };
 
@@ -156,13 +208,19 @@ export default function TeeTimes() {
     router.push('/tee-times/create');
   };
   
-  // Filter tee times by search query
-  const filteredTeeTimes = searchQuery.trim() 
-    ? teeTimes.filter(teeTime => 
+  // Filter tee times by search query and user invitations if enabled
+  const filteredTeeTimes = teeTimes
+    .filter(teeTime => {
+      // Apply text search filter
+      const matchesSearch = !searchQuery.trim() || 
         teeTime.courseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        teeTime.description?.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : teeTimes;
+        teeTime.description?.toLowerCase().includes(searchQuery.toLowerCase());
+        
+      // Apply invited-only filter if enabled
+      const matchesInvited = !filters.showInvitedOnly || isUserInvited(teeTime);
+      
+      return matchesSearch && matchesInvited;
+    });
 
   return (
     <div className="bg-gray-50 dark:bg-gray-900 min-h-screen pb-12">
@@ -205,6 +263,7 @@ export default function TeeTimes() {
         <TeeTimeFiltersComponent 
           onFilterChange={handleFilterChange}
           initialFilters={filters}
+          showInvitedFilter={true}
         />
         
         <div className="flex justify-between items-center mb-6">
@@ -241,7 +300,7 @@ export default function TeeTimes() {
           </div>
         </div>
         
-        {isLoading && teeTimes.length === 0 ? (
+        {initialLoading ? (
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-12 text-center">
             <LoadingSpinner size="lg" color="primary" className="mx-auto mb-4" />
             <Text className="text-gray-600 dark:text-gray-400">Loading tee times...</Text>
@@ -257,7 +316,7 @@ export default function TeeTimes() {
               Couldn't load tee times
             </Text>
             <Text className="text-gray-600 dark:text-gray-400 mb-6">
-              {error}
+              {error instanceof Error ? error.message : String(error)}
             </Text>
             <Button 
               variant="outline" 
@@ -279,14 +338,16 @@ export default function TeeTimes() {
             <Text className="text-gray-600 dark:text-gray-400 mb-6">
               {searchQuery 
                 ? "No tee times match your search query" 
-                : "No tee times found matching your filters"}
+                : filters.showInvitedOnly
+                  ? "You don't have any pending invitations"
+                  : "No tee times found matching your filters"}
             </Text>
             <div className="flex flex-col sm:flex-row justify-center gap-3">
               <Button 
                 variant="outline" 
                 onClick={() => {
                   setSearchQuery('');
-                  handleFilterChange({status: 'all', date: null});
+                  handleFilterChange({status: 'all', date: null, showInvitedOnly: false});
                 }}
               >
                 Clear Filters
@@ -303,16 +364,41 @@ export default function TeeTimes() {
               ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' 
               : 'space-y-4'} mb-8`}
             >
-              {filteredTeeTimes.map(teeTime => (
-                <div key={teeTime.id} className={view === 'list' ? 'animate-fadeIn' : 'animate-scaleIn'}>
-                  <TeeTimeCard
-                    teeTime={teeTime}
-                    creator={creators[teeTime.creatorId] || undefined}
-                    onJoinRequest={handleJoinRequest}
-                    currentUserId={user?.uid}
-                  />
-                </div>
-              ))}
+              {filteredTeeTimes.map(teeTime => {
+                const userIsInvited = isUserInvited(teeTime);
+                const userIsPartOfTeeTime = isUserPartOfTeeTime(teeTime);
+                
+                return (
+                  <div key={teeTime.id} className={`${view === 'list' ? 'animate-fadeIn' : 'animate-scaleIn'} relative`}>
+                    {/* Invitation Badge */}
+                    {userIsInvited && (
+                      <div className="absolute -top-2 -right-2 z-10">
+                        <div className="bg-amber-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-md flex items-center">
+                          <Mail className="h-3 w-3 mr-1" />
+                          Invited
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Already Joined Badge */}
+                    {!userIsInvited && userIsPartOfTeeTime && (
+                      <div className="absolute -top-2 -right-2 z-10">
+                        <div className="bg-blue-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-md flex items-center">
+                          <Users className="h-3 w-3 mr-1" />
+                          Joined
+                        </div>
+                      </div>
+                    )}
+                    
+                    <TeeTimeCard
+                      teeTime={teeTime}
+                      creator={creators[teeTime.creatorId] || undefined}
+                      onJoinRequest={handleJoinRequest}
+                      currentUserId={user?.uid}
+                    />
+                  </div>
+                );
+              })}
             </div>
             
             {hasMore && (

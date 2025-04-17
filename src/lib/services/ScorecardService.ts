@@ -691,7 +691,8 @@ export class ScorecardService {
         ...existingData,
         ...updateData,
         updatedAt: new Date(),
-        holes: updatedHoles
+        holes: updatedHoles,
+        totalScore: stats.totalScore || 0 // Ensure totalScore is a number
       };
       
       // Update cache
@@ -779,11 +780,14 @@ export class ScorecardService {
       await batch.commit();
       
       // Update the scorecard object
+      // Use literal type directly instead of importing
+      
       const updatedScorecard: Scorecard = {
         ...scorecard,
         ...updateData,
         updatedAt: new Date(),
-        finalizedAt: new Date()
+        finalizedAt: new Date(),
+        state: 'completed' as 'draft' | 'live' | 'completed' | 'archived' // Use literal union instead of ScorecardState
       };
       
       // Update cache

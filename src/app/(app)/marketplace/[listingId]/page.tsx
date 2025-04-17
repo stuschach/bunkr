@@ -194,7 +194,9 @@ export default function ListingDetailPage() {
       const chat = await getOrCreateChat(listing.sellerId);
       
       // Send the message directly
-      await sendMessage(chat.id, contactMessage);
+      if (chat?.id) {
+        await sendMessage(chat.id, contactMessage);
+      }
       
       // Show success toast
       setShowSuccessToast(true);

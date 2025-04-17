@@ -16,21 +16,27 @@ import {
   FilterIcon, 
   XIcon, 
   ChevronDownIcon, 
-  SearchIcon 
+  SearchIcon,
+  InfoIcon,
+  MailIcon
 } from 'lucide-react';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 interface TeeTimeFiltersProps {
   onFilterChange: (filters: TeeTimeFilters) => void;
   initialFilters?: TeeTimeFilters;
+  showInvitedFilter?: boolean;
 }
 
 export function TeeTimeFiltersComponent({ 
   onFilterChange, 
-  initialFilters 
+  initialFilters,
+  showInvitedFilter = false
 }: TeeTimeFiltersProps) {
   const [filters, setFilters] = useState<TeeTimeFilters>(initialFilters || {
     status: 'open',
     date: null,
+    showInvitedOnly: false
   });
   
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -74,11 +80,21 @@ export function TeeTimeFiltersComponent({
     onFilterChange(newFilters);
   };
   
+  const handleToggleInvitedOnly = () => {
+    const newFilters = {
+      ...filters,
+      showInvitedOnly: !filters.showInvitedOnly
+    };
+    setFilters(newFilters);
+    onFilterChange(newFilters);
+  };
+  
   const handleClearFilters = () => {
     const newFilters = {
       status: 'all',
       date: null,
-      maxDistance: undefined
+      maxDistance: undefined,
+      showInvitedOnly: false
     };
     setFilters(newFilters);
     onFilterChange(newFilters);
@@ -93,7 +109,8 @@ export function TeeTimeFiltersComponent({
   const hasActiveFilters = 
     (filters.status && filters.status !== 'all') || 
     filters.date !== null || 
-    filters.maxDistance !== undefined;
+    filters.maxDistance !== undefined ||
+    filters.showInvitedOnly;
 
   return (
     <Card className="mb-6 border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden transition-all duration-300">
@@ -105,7 +122,7 @@ export function TeeTimeFiltersComponent({
             <h3 className="font-medium text-gray-800 dark:text-gray-200">Filter Tee Times</h3>
             {hasActiveFilters && (
               <Badge className="ml-2 bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                {Object.values(filters).filter(v => v !== null && v !== undefined && v !== 'all').length}
+                {Object.values(filters).filter(v => v !== null && v !== undefined && v !== 'all' && v !== false).length}
               </Badge>
             )}
           </div>
@@ -229,6 +246,31 @@ export function TeeTimeFiltersComponent({
                   className="w-full rounded-full border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"
                 />
               </div>
+              
+              {/* Invitations only filter */}
+              {showInvitedFilter && (
+                <div className="md:col-span-3 mt-2">
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="invited-only-toggle"
+                      checked={filters.showInvitedOnly || false}
+                      onChange={handleToggleInvitedOnly}
+                      className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                    />
+                    <label 
+                      htmlFor="invited-only-toggle" 
+                      className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer flex items-center"
+                    >
+                      <MailIcon className="w-4 h-4 mr-1.5 text-amber-500" />
+                      Show only tee times I've been invited to
+                      <Tooltip content="Filter to only show tee times where you have a pending invitation">
+                        <InfoIcon className="w-4 h-4 ml-2 text-gray-500 cursor-help" />
+                      </Tooltip>
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -269,6 +311,19 @@ export function TeeTimeFiltersComponent({
                   <button
                     onClick={() => handleMaxDistanceChange({ target: { value: 'any' } } as React.ChangeEvent<HTMLSelectElement>)}
                     className="ml-1 p-0.5 hover:bg-green-200 dark:hover:bg-green-800 rounded-full"
+                  >
+                    <XIcon className="h-3 w-3" />
+                  </button>
+                </Badge>
+              )}
+              
+              {filters.showInvitedOnly && (
+                <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 flex items-center px-3 py-1.5 rounded-full">
+                  <MailIcon className="h-3 w-3 mr-1" />
+                  <span>Invitations Only</span>
+                  <button
+                    onClick={handleToggleInvitedOnly}
+                    className="ml-1 p-0.5 hover:bg-amber-200 dark:hover:bg-amber-800 rounded-full"
                   >
                     <XIcon className="h-3 w-3" />
                   </button>

@@ -20,12 +20,12 @@ export function LocationSelector({
   const [searchTerm, setSearchTerm] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
-  const [locationError, setLocationError] = useState(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
   
   // Function to get location name from coordinates
-  const getLocationNameFromCoords = async (latitude, longitude) => {
+  const getLocationNameFromCoords = async (latitude: number, longitude: number) => {
     try {
       // Using BigDataCloud's free reverse geocoding API
       const response = await fetch(
@@ -172,8 +172,17 @@ export function LocationSelector({
     { name: 'Pinehurst', region: 'North Carolina', country: 'USA', lat: 35.1968, lon: -79.4681 },
   ];
   
+  // Define location type
+  interface LocationInfo {
+    name: string;
+    region?: string;
+    country: string;
+    lat: number;
+    lon: number;
+  }
+  
   // Memoize handleSelectLocation to prevent causing re-renders
-  const handleSelectLocation = useCallback((location) => {
+  const handleSelectLocation = useCallback((location: LocationInfo) => {
     onSelectLocation(
       location.lat,
       location.lon,

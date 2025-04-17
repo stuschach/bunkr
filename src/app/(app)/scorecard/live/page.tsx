@@ -129,7 +129,10 @@ export default function LiveScoringPage() {
             {initialData?.courseId && (
               <TeeSelector 
                 onTeeSelected={handleTeeSelected} 
-                initialTeeBox={initialData.teeBox}
+                initialTeeBox={{
+                  ...initialData.teeBox,
+                  color: initialData.teeBox.color || 'white' // Ensure color exists
+                }}
                 courseId={initialData.courseId}
               />
             )}

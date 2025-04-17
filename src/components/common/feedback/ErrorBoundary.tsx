@@ -2,7 +2,8 @@
 import React, { Component, ReactNode, ErrorInfo } from 'react';
 
 interface ErrorBoundaryProps {
-  fallback?: ReactNode | ((error: Error, errorInfo: ErrorInfo) => ReactNode);
+  // Using JSX.Element instead of ReactNode for fallback to fix type error
+  fallback?: JSX.Element | ((error: Error, errorInfo: ErrorInfo) => JSX.Element);
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
   children: ReactNode;
 }

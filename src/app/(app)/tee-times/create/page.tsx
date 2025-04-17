@@ -7,33 +7,14 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { useTeeTime } from '@/lib/hooks/useTeeTime';
 import { TeeTimeForm } from '@/components/tee-times/TeeTimeForm';
 import { Heading, Text } from '@/components/ui/Typography';
-import { TeeTimeFormData } from '@/types/tee-times';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
+import { Card, CardContent } from '@/components/ui/Card';
 
 export default function CreateTeeTimes() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const { error, isLoading, createTeeTime } = useTeeTime();
+  const { isLoading, error, createTeeTime } = useTeeTime();
   const [formError, setFormError] = useState<string | null>(null);
-  
-  // Handle form submission
-  const handleSubmit = async (data: TeeTimeFormData) => {
-    setFormError(null);
-    
-    try {
-      // Use the useTeeTime hook which now internally uses usePostCreation
-      const teeTimeId = await createTeeTime(data);
-      
-      if (teeTimeId) {
-        router.push(`/tee-times/${teeTimeId}`);
-      } else {
-        setFormError('Failed to create tee time. Please try again.');
-      }
-    } catch (error) {
-      console.error('Error creating tee time:', error);
-      setFormError('An unexpected error occurred. Please try again.');
-    }
-  };
   
   // Check if user is authenticated
   if (authLoading) {
@@ -60,19 +41,25 @@ export default function CreateTeeTimes() {
       </div>
       
       {formError && (
-        <div className="bg-red-50 dark:bg-red-900/10 p-4 rounded-md mb-6">
-          <Text className="text-red-600 dark:text-red-400">{formError}</Text>
-        </div>
+        <Card className="mb-6 border-red-300 dark:border-red-500 bg-red-50 dark:bg-red-900/10">
+          <CardContent className="p-4">
+            <Text className="text-red-600 dark:text-red-400 font-medium">{formError}</Text>
+          </CardContent>
+        </Card>
       )}
       
       {error && (
-        <div className="bg-red-50 dark:bg-red-900/10 p-4 rounded-md mb-6">
-          <Text className="text-red-600 dark:text-red-400">{error}</Text>
-        </div>
+        <Card className="mb-6 border-red-300 dark:border-red-500 bg-red-50 dark:bg-red-900/10">
+          <CardContent className="p-4">
+            <Text className="text-red-600 dark:text-red-400 font-medium">
+              {error instanceof Error ? error.message : String(error)}
+            </Text>
+          </CardContent>
+        </Card>
       )}
       
       <TeeTimeForm
-        onSubmit={handleSubmit}
+        autoSubmit={true}
         isSubmitting={isLoading}
       />
     </div>

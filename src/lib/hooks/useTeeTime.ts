@@ -1,6 +1,7 @@
 // src/lib/hooks/useTeeTime.ts
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { useTeeTime as useTeeTimeContext } from '@/lib/contexts/TeeTimeContext';
 import { 
   TeeTime, 
   TeeTimePlayer, 
@@ -9,379 +10,218 @@ import {
 } from '@/types/tee-times';
 import { UserProfile } from '@/types/auth';
 import { usePostCreation } from '@/lib/hooks/usePostCreation';
-import { 
-  createTeeTime,
-  getTeeTimeById,
-  getTeeTimeWithPlayers,
-  getTeeTimesList,
-  getUserTeeTimes,
-  updateTeeTime,
-  cancelTeeTime,
-  requestToJoinTeeTime,
-  approvePlayerRequest,
-  removePlayerFromTeeTime,
-  invitePlayerToTeeTime,
-  searchUsersByName
-} from '@/lib/services/tee-times-service';
-import { doc, getDoc, Timestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
+import { useToast } from '@/lib/hooks/useToast';
+import { DocumentSnapshot } from 'firebase/firestore';
 
+/**
+ * A hook that combines the TeeTimeContext with additional functionality
+ * This wraps the context for backward compatibility with existing components
+ */
 export function useTeeTime() {
   const { user } = useAuth();
+  const teeTimeContext = useTeeTimeContext();
   const { createPost, isCreating: isCreatingPost } = usePostCreation();
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Reset error on new operations
-  const resetError = () => setError(null);
-
-  // Get user profile by ID
-  const getUserProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      
-      if (!userDoc.exists()) {
-        return null;
-      }
-      
-      const userData = userDoc.data();
-      
-      return {
-        uid: userDoc.id,
-        email: userData.email || null,
-        displayName: userData.displayName || null,
-        photoURL: userData.photoURL || null,
-        createdAt: userData.createdAt?.toDate() || new Date(),
-        handicapIndex: userData.handicapIndex || null,
-        homeCourse: userData.homeCourse || null,
-        profileComplete: userData.profileComplete || false,
-        bio: userData.bio || null
-      };
-    } catch (error) {
-      console.error('Error getting user profile:', error);
-      return null;
-    }
-  }, []);
-
-  // Fetch player profiles for a tee time
-  const getPlayerProfiles = useCallback(async (
-    players: TeeTimePlayer[]
-  ): Promise<(TeeTimePlayer & { profile?: UserProfile })[]> => {
-    try {
-      const playersWithProfiles = await Promise.all(
-        players.map(async (player) => {
-          const profile = await getUserProfile(player.userId);
-          return { ...player, profile };
-        })
-      );
-      
-      return playersWithProfiles;
-    } catch (error) {
-      console.error('Error fetching player profiles:', error);
-      return players;
-    }
-  }, [getUserProfile]);
-
-  // Create a new tee time - UPDATED to use usePostCreation hook
+  const notificationCreator = useNotificationCreator();
+  const { showToast } = useToast();
+  
+  // Local states
+  const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
+  const [isResponding, setIsResponding] = useState<Record<string, boolean>>({});
+  
+  // Calculate overall loading state
+  const isLoading = teeTimeContext.isLoading || 
+                    isCreatingPost || 
+                    Object.values(isDeleting).some(Boolean) ||
+                    Object.values(isResponding).some(Boolean);
+  
+  // Create a new tee time
   const handleCreateTeeTime = useCallback(async (teeTimeData: TeeTimeFormData): Promise<string | null> => {
     if (!user) {
-      setError('You must be logged in to create a tee time');
+      teeTimeContext.resetError();
       return null;
     }
     
-    setIsLoading(true);
-    resetError();
-    
     try {
-      console.log("Creating tee time with data:", teeTimeData);
-      
-      // First create the tee time entity
-      const teeTimeId = await createTeeTime(user.uid, teeTimeData);
+      // First create the tee time entity using the context
+      const teeTimeId = await teeTimeContext.createTeeTime(teeTimeData);
       
       if (!teeTimeId) {
-        throw new Error('Failed to create tee time');
+        return null;
       }
-      
-      // Format date and time for post content
-      const dateTime = new Date(teeTimeData.date);
-      const [hours, minutes] = teeTimeData.time.split(':').map(Number);
-      dateTime.setHours(hours, minutes);
-      
-      // Create the post using our unified post creation hook
-      const postContent = `I'm hosting a tee time at ${teeTimeData.courseName} on ${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. Looking for ${teeTimeData.maxPlayers - 1} more players!`;
-      
-      // Create the post with the correct metadata from the start
-      // FIXED: Convert JavaScript Date to Firestore Timestamp
-      await createPost({
-        content: postContent,
-        teeTimeId: teeTimeId,
-        courseName: teeTimeData.courseName,
-        courseId: teeTimeData.courseId || null,
-        dateTime: Timestamp.fromDate(dateTime),  // Convert Date to Timestamp
-        maxPlayers: teeTimeData.maxPlayers,
-        visibility: teeTimeData.visibility === 'private' ? 'private' : 'public',
-      }, 'tee-time'); // Use tee-time type from the start
-      
-      console.log("Tee time and post created with ID:", teeTimeId);
       
       return teeTimeId;
     } catch (error) {
       console.error('Error creating tee time:', error);
-      setError('Failed to create tee time');
       return null;
-    } finally {
-      setIsLoading(false);
     }
-  }, [user, createPost]);
-
-  // Get a tee time with players and profiles
-  const getTeeTimeDetails = useCallback(async (
-    teeTimeId: string
-  ): Promise<{ teeTime: TeeTime | null; players: (TeeTimePlayer & { profile?: UserProfile })[] }> => {
-    setIsLoading(true);
-    resetError();
-    
-    try {
-      const { teeTime, players } = await getTeeTimeWithPlayers(teeTimeId);
-      
-      if (!teeTime) {
-        setError('Tee time not found');
-        return { teeTime: null, players: [] };
-      }
-      
-      const playersWithProfiles = await getPlayerProfiles(players);
-      
-      return { teeTime, players: playersWithProfiles };
-    } catch (error) {
-      setError('Failed to load tee time details');
-      console.error('Error getting tee time details:', error);
-      return { teeTime: null, players: [] };
-    } finally {
-      setIsLoading(false);
-    }
-  }, [getPlayerProfiles]);
-
-  // Get tee times for the current user
-  const getUserTeeTimesList = useCallback(async () => {
-    if (!user) {
-      setError('You must be logged in to view your tee times');
-      return [];
-    }
-    
-    setIsLoading(true);
-    resetError();
-    
-    try {
-      const teeTimes = await getUserTeeTimes(user.uid);
-      return teeTimes;
-    } catch (error) {
-      setError('Failed to load your tee times');
-      console.error('Error getting user tee times:', error);
-      return [];
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
-
-  // Get public tee times list
-  const getPublicTeeTimesList = useCallback(async (
-    filters?: TeeTimeFilters,
-    lastVisible?: any,
-    pageSize: number = 10
-  ) => {
-    setIsLoading(true);
-    resetError();
-    
-    try {
-      const result = await getTeeTimesList(filters, lastVisible, pageSize);
-      return result;
-    } catch (error) {
-      setError('Failed to load tee times');
-      console.error('Error getting tee times list:', error);
-      return { teeTimes: [], lastVisible: null };
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Update an existing tee time
-  const handleUpdateTeeTime = useCallback(async (
-    teeTimeId: string,
-    updates: Partial<TeeTimeFormData>
-  ): Promise<boolean> => {
-    if (!user) {
-      setError('You must be logged in to update a tee time');
-      return false;
-    }
-    
-    setIsLoading(true);
-    resetError();
-    
-    try {
-      // The service will update the post automatically
-      await updateTeeTime(teeTimeId, user.uid, updates);
-      return true;
-    } catch (error) {
-      setError('Failed to update tee time');
-      console.error('Error updating tee time:', error);
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
-
-  // Cancel a tee time
-  const handleCancelTeeTime = useCallback(async (teeTimeId: string): Promise<boolean> => {
-    if (!user) {
-      setError('You must be logged in to cancel a tee time');
-      return false;
-    }
-    
-    setIsLoading(true);
-    resetError();
-    
-    try {
-      // The service will update the post automatically
-      await cancelTeeTime(teeTimeId, user.uid);
-      return true;
-    } catch (error) {
-      setError('Failed to cancel tee time');
-      console.error('Error cancelling tee time:', error);
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
-
-  // Request to join a tee time
+  }, [user, teeTimeContext, createPost]);
+  
+  // Handle join request with notification
   const handleJoinRequest = useCallback(async (teeTimeId: string): Promise<boolean> => {
     if (!user) {
-      setError('You must be logged in to join a tee time');
-      return false;
+      throw new Error('You must be logged in to join a tee time');
     }
-    
-    setIsLoading(true);
-    resetError();
     
     try {
-      await requestToJoinTeeTime(teeTimeId, user.uid);
-      return true;
+      // Use the context function to request to join
+      const success = await teeTimeContext.joinTeeTime(teeTimeId);
+      
+      if (success) {
+        // Get the tee time details for the notification
+        const teeTimeDetails = await teeTimeContext.getTeeTimeDetails(teeTimeId);
+        
+        if (teeTimeDetails.teeTime?.creatorId) {
+          // Send notification to creator
+          await notificationCreator.sendNotification(
+            teeTimeDetails.teeTime.creatorId,
+            'tee-time-request',
+            teeTimeId,
+            'tee-time',
+            {
+              message: `${user.displayName || 'Someone'} has requested to join your tee time.`,
+              courseName: teeTimeDetails.teeTime.courseName,
+              date: teeTimeDetails.teeTime.dateTime?.toISOString() || new Date().toISOString()
+            }
+          );
+        }
+      }
+      
+      return success;
     } catch (error) {
-      setError('Failed to request to join tee time');
-      console.error('Error joining tee time:', error);
-      return false;
-    } finally {
-      setIsLoading(false);
+      console.error('Error requesting to join tee time:', error);
+      throw error;
     }
-  }, [user]);
-
-  // Approve a player's request
-  const handleApprovePlayer = useCallback(async (
-    teeTimeId: string,
-    playerId: string
+  }, [user, teeTimeContext, notificationCreator]);
+  
+  // Respond to an invitation (for invited users) - FIXED to avoid duplicate notifications
+  const handleRespondToInvitation = useCallback(async (
+    teeTimeId: string, 
+    playerId: string, 
+    response: 'accept' | 'decline'
   ): Promise<boolean> => {
     if (!user) {
-      setError('You must be logged in to approve requests');
-      return false;
+      throw new Error('You must be logged in to respond to invitations');
     }
     
-    setIsLoading(true);
-    resetError();
+    // Set responding state
+    const operationKey = `respond_${teeTimeId}_${response}`;
+    setIsResponding(prev => ({ ...prev, [operationKey]: true }));
     
     try {
-      await approvePlayerRequest(teeTimeId, playerId, user.uid);
-      return true;
+      // Use context function to update status which will handle the notifications
+      const success = await teeTimeContext.respondToInvitation(teeTimeId, playerId, response);
+      return success;
     } catch (error) {
-      setError('Failed to approve player request');
-      console.error('Error approving player:', error);
-      return false;
+      console.error(`Error ${response}ing invitation:`, error);
+      
+      // The context already showed a toast, so we don't need to show another one
+      throw error;
     } finally {
-      setIsLoading(false);
+      // Clear responding state
+      setIsResponding(prev => ({ ...prev, [operationKey]: false }));
     }
-  }, [user]);
-
-  // Remove a player from a tee time
-  const handleRemovePlayer = useCallback(async (
-    teeTimeId: string,
-    playerId: string
+  }, [user, teeTimeContext]);
+  
+  // Handle delete post operation (not exposed in context)
+  const deletePost = useCallback(async (
+    postId: string, 
+    options?: { 
+      skipConfirmation?: boolean; 
+      showSuccess?: boolean;
+      reason?: string;
+      refreshFeed?: boolean;
+    }
   ): Promise<boolean> => {
-    if (!user) {
-      setError('You must be logged in to remove players');
-      return false;
-    }
+    if (!user) return false;
     
-    setIsLoading(true);
-    resetError();
+    // Mark as deleting
+    setIsDeleting(prev => ({ ...prev, [postId]: true }));
     
     try {
-      await removePlayerFromTeeTime(teeTimeId, playerId, user.uid);
+      // Call the API to delete the post
+      const response = await fetch(`/api/posts/${postId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reason: options?.reason || 'user_requested',
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete post');
+      }
+      
       return true;
     } catch (error) {
-      setError('Failed to remove player');
-      console.error('Error removing player:', error);
+      console.error('Error deleting post:', error);
       return false;
     } finally {
-      setIsLoading(false);
+      // Clear deleting state
+      setIsDeleting(prev => ({ ...prev, [postId]: false }));
     }
   }, [user]);
-
-  // Invite a player to a tee time by userId instead of email
-  const handleInvitePlayer = useCallback(async (
-    teeTimeId: string,
-    invitedUserId: string
-  ): Promise<boolean> => {
+  
+  // Handle delete tee time
+  const handleDeleteTeeTime = useCallback(async (teeTimeId: string): Promise<boolean> => {
     if (!user) {
-      setError('You must be logged in to invite players');
-      return false;
-    }
-    
-    setIsLoading(true);
-    resetError();
-    
-    try {
-      await invitePlayerToTeeTime(teeTimeId, invitedUserId, user.uid);
-      return true;
-    } catch (error) {
-      setError('Failed to invite player');
-      console.error('Error inviting player:', error);
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user]);
-
-  // Search users by name
-  const handleSearchUsers = useCallback(async (
-    query: string
-  ): Promise<UserProfile[]> => {
-    if (query.trim().length < 3) {
-      return [];
+      throw new Error('You must be logged in to delete a tee time');
     }
     
     try {
-      return await searchUsersByName(query);
+      // Use the context method to delete the tee time
+      return await teeTimeContext.deleteTeeTime(teeTimeId);
     } catch (error) {
-      console.error('Error searching users:', error);
-      return [];
+      console.error('Error deleting tee time:', error);
+      throw error;
     }
-  }, []);
-
+  }, [user, teeTimeContext]);
+  
+  // Get user tee times - FIXED to properly handle pagination
+  const getUserTeeTimes = useCallback(async (
+    options?: {
+      status?: string;
+      lastVisible?: DocumentSnapshot;
+      pageSize?: number;
+    }
+  ): Promise<{ teeTimes: TeeTime[]; lastVisible: DocumentSnapshot | null }> => {
+    if (!user) {
+      throw new Error('You must be logged in to view your tee times');
+    }
+    
+    try {
+      // Use the context method which returns paginated results
+      return await teeTimeContext.getUserTeeTimes(
+        options?.status,
+        options?.lastVisible,
+        options?.pageSize
+      );
+    } catch (error) {
+      console.error('Error getting user tee times:', error);
+      throw error;
+    }
+  }, [user, teeTimeContext]);
+  
+  // Return all context functions plus the additional ones
   return {
-    isLoading: isLoading || isCreatingPost,
-    error,
-    resetError,
-    getUserProfile,
-    getPlayerProfiles,
+    // Pass through all context properties
+    ...teeTimeContext,
+    
+    // Override loading state to include additional states
+    isLoading,
+    
+    // Add custom functions
     createTeeTime: handleCreateTeeTime,
-    getTeeTimeDetails,
-    getUserTeeTimes: getUserTeeTimesList,
-    getPublicTeeTimesList,
-    updateTeeTime: handleUpdateTeeTime,
-    cancelTeeTime: handleCancelTeeTime,
     joinTeeTime: handleJoinRequest,
-    approvePlayer: handleApprovePlayer,
-    removePlayer: handleRemovePlayer,
-    invitePlayer: handleInvitePlayer,
-    searchUsers: handleSearchUsers,
+    respondToInvitation: handleRespondToInvitation,
+    deleteTeeTime: handleDeleteTeeTime,
+    deletePost,
+    getUserTeeTimes, // FIXED version that returns paginated results
+    
+    // Add internal states for UI
+    isDeleting,
+    isResponding
   };
 }

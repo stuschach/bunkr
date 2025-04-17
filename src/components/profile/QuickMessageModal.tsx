@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useMessages } from '@/lib/hooks/useMessages';
-import { useNotification } from '@/lib/contexts/NotificationContext';
+import { useNotifications } from '@/lib/contexts/NotificationContext';
 
 interface QuickMessageModalProps {
   recipientId: string;
@@ -24,7 +24,7 @@ export function QuickMessageModal({
   const { user } = useAuth();
   const router = useRouter();
   const { getOrCreateChat, sendMessage } = useMessages();
-  const { showNotification } = useNotification();
+  const { showNotification } = useNotifications();
   
   // Predefined quick messages for golf context
   const quickMessages = [

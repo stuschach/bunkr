@@ -192,7 +192,7 @@ import {
       const q = query(
         usersRef,
         orderBy('createdAt', 'desc'),
-        limit(limit + excludeUserIds.length) // Fetch extra to account for filtering
+        limit(Number(limit) + excludeUserIds.length) // Fetch extra to account for filtering
       );
       
       const querySnapshot = await getDocs(q);

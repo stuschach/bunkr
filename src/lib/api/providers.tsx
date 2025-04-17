@@ -12,9 +12,11 @@ import { UserPreferencesProvider } from '@/lib/contexts/UserPreferencesContext';
 import { FollowProvider } from '@/lib/contexts/FollowContext';
 import { VisibilityProvider } from '@/lib/contexts/VisibilityContext';
 import { ScorecardProvider } from '@/lib/contexts/ScoreCardContext';
+import { TeeTimeProvider } from '@/lib/contexts/TeeTimeContext'; 
 import { OfflineManager } from '@/lib/services/OfflineManager';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useNotifications } from '@/lib/contexts/NotificationContext';
+import { cacheService } from '@/lib/services/CacheService'; // Import the singleton instance directly
 
 /**
  * Scorecard sync provider that handles offline synchronization
@@ -168,28 +170,51 @@ interface ApiProvidersProps {
   children: React.ReactNode;
 }
 
+/**
+ * Initialize all client-side services that need to run at startup
+ */
+function useServiceInitialization() {
+  // This hook ensures services are initialized only once and only on the client side
+  useEffect(() => {
+    console.log('Initializing client-side services...');
+    
+    // Use the singleton instance directly
+    console.log('Core cache service initialized:', cacheService);
+    
+    // Tee time cache capabilities are now integrated into the main CacheService
+    console.log('Tee time cache initialized');
+    
+    // Additional service initializations can be added here
+  }, []);
+}
+
 export const ApiProviders: React.FC<ApiProvidersProps> = ({ children }) => {
   // Create a new QueryClient instance for each session
   const [queryClient] = useState(() => createQueryClient());
+  
+  // Initialize services
+  useServiceInitialization();
 
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ThemeProvider>
           <NotificationProvider>
-            <FollowProvider>
-              <ResponsiveProvider>
-                <UserPreferencesProvider>
-                  <VisibilityProvider>
-                    <ScorecardProvider>
-                      <ScorecardSyncProvider>
-                        {children}
-                      </ScorecardSyncProvider>
-                    </ScorecardProvider>
-                  </VisibilityProvider>
-                </UserPreferencesProvider>
-              </ResponsiveProvider>
-            </FollowProvider>
+            <TeeTimeProvider>
+              <FollowProvider>
+                <ResponsiveProvider>
+                  <UserPreferencesProvider>
+                    <VisibilityProvider>
+                      <ScorecardProvider>
+                        <ScorecardSyncProvider>
+                          {children}
+                        </ScorecardSyncProvider>
+                      </ScorecardProvider>
+                    </VisibilityProvider>
+                  </UserPreferencesProvider>
+                </ResponsiveProvider>
+              </FollowProvider>
+            </TeeTimeProvider>
           </NotificationProvider>
         </ThemeProvider>
       </AuthProvider>

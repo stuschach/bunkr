@@ -157,6 +157,6 @@ export function sortChatsByRecency(chats: Chat[]): Chat[] {
       ? safeTimestampToDate(b.lastMessage.createdAt)?.getTime() 
       : safeTimestampToDate(b.updatedAt)?.getTime() || 0;
     
-    return bLastMessageTime - aLastMessageTime;
+    return (bLastMessageTime || 0) - (aLastMessageTime || 0);
   });
 }

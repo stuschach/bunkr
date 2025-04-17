@@ -453,7 +453,7 @@ import {
           collection(db, 'scorecards'),
           where('userId', '==', userId),
           orderBy('date', 'desc'),
-          limit(20) // Get more than we need to find distinct courses
+          limit(20 as number) // Get more than we need to find distinct courses
         );
         
         const scorecardsSnapshot = await getDocs(scorecardsQuery);

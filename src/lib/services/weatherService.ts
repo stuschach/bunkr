@@ -257,7 +257,7 @@ export interface WeatherData {
         precipProbability: current.precip_mm > 0 ? current.precip_mm * 10 : 0,
         golfConditions,
         location: `${location.name}, ${location.region}`,
-        forecast: forecast?.map(day => ({
+        forecast: forecast?.map((day: any) => ({
           date: day.date,
           condition: day.day.condition.text,
           icon: day.day.condition.icon,

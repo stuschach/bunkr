@@ -287,8 +287,8 @@ export class OfflineManager {
       ...existingScorecard,
       ...data,
       stats,
-      totalScore: stats.totalScore,
-      scoreToPar: stats.totalScore - (data.coursePar || existingScorecard.coursePar),
+      totalScore: stats.totalScore || 0,
+      scoreToPar: (stats.totalScore || 0) - (data.coursePar || existingScorecard.coursePar),
       updatedAt: new Date(),
       _isOffline: true
     };

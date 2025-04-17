@@ -11,7 +11,7 @@ export function usePostCreation() {
   const [isCreating, setIsCreating] = useState(false);
   const { showNotification } = useNotifications();
 
-  const createPost = async (postData: { content: any; media: any; visibility: any; hashtags: any; location: any; roundId: any; teeTimeId: any; courseName: any; dateTime: any; maxPlayers: any; }, postType = 'regular') => {
+  const createPost = async (postData: { content: any; media?: any; visibility: any; hashtags?: any; location?: any; roundId?: any; teeTimeId?: any; courseName?: any; dateTime?: any; maxPlayers?: any; courseId?: any; }, postType = 'regular') => {
     if (!user) {
       throw new Error('User must be authenticated to create a post');
     }

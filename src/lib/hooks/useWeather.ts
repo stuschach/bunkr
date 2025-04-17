@@ -202,6 +202,9 @@ export function useWeather(options?: UseWeatherOptions) {
       if (cachedData.data && isCacheValid(cachedData.timestamp) && 
           (!coordinates || 
            (cachedData.coordinates &&
+            typeof cachedData.coordinates === 'object' &&
+            'latitude' in cachedData.coordinates &&
+            'longitude' in cachedData.coordinates &&
             cachedData.coordinates.latitude === coordinates?.latitude &&
             cachedData.coordinates.longitude === coordinates?.longitude))) {
         if (isMountedRef.current) {

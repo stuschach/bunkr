@@ -1,7 +1,7 @@
 // src/components/tee-times/TeeTimeForm.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { Input } from '@/components/ui/Input';
@@ -12,22 +12,28 @@ import { Heading, Text } from '@/components/ui/Typography';
 import { Card, CardContent, CardFooter } from '@/components/ui/Card';
 import { RadioGroup } from '@/components/ui/Radio';
 import { TeeTimeFormData, TeeTimeVisibility } from '@/types/tee-times';
+import { useTeeTime } from '@/lib/hooks/useTeeTime';
 
 interface TeeTimeFormProps {
   initialData?: Partial<TeeTimeFormData>;
-  onSubmit: (data: TeeTimeFormData) => Promise<void>;
+  onSubmit?: (data: TeeTimeFormData) => Promise<void>;
   isSubmitting?: boolean;
   isEditing?: boolean;
+  autoSubmit?: boolean; // New prop to determine if we use context directly
 }
 
 export function TeeTimeForm({ 
   initialData, 
   onSubmit, 
   isSubmitting = false,
-  isEditing = false 
+  isEditing = false,
+  autoSubmit = false
 }: TeeTimeFormProps) {
   const router = useRouter();
   const today = new Date();
+  
+  // Use the tee time context
+  const { isLoading: contextLoading, createTeeTime, updateTeeTime, pendingOperations } = useTeeTime();
   
   // Form state
   const [formData, setFormData] = useState<TeeTimeFormData>({
@@ -47,11 +53,33 @@ export function TeeTimeForm({
   // Show date picker toggle
   const [showDatePicker, setShowDatePicker] = useState(false);
   
+  // Form processing status
+  const isProcessing = isSubmitting || 
+    contextLoading || 
+    (isEditing && initialData?.courseId ? pendingOperations[`update_${initialData.courseId}`] : false) ||
+    (!isEditing && pendingOperations['create_tee_time']);
+  
+  // Update form if initial data changes (e.g. from API)
+  useEffect(() => {
+    if (initialData) {
+      setFormData(prev => ({
+        ...prev,
+        courseName: initialData.courseName || prev.courseName,
+        courseId: initialData.courseId || prev.courseId,
+        date: initialData.date || prev.date,
+        time: initialData.time || prev.time,
+        maxPlayers: initialData.maxPlayers || prev.maxPlayers,
+        visibility: initialData.visibility || prev.visibility,
+        description: initialData.description || prev.description,
+      }));
+    }
+  }, [initialData]);
+  
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: name === 'maxPlayers' ? parseInt(value) : value
     }));
     
     // Clear error when field is edited
@@ -114,7 +142,7 @@ export function TeeTimeForm({
     return Object.keys(newErrors).length === 0;
   };
   
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validateForm()) {
@@ -122,10 +150,22 @@ export function TeeTimeForm({
     }
     
     try {
-      await onSubmit(formData);
-      
-      if (!isEditing) {
-        router.push('/tee-times');
+      if (autoSubmit) {
+        // Use the context directly
+        if (isEditing && initialData?.courseId) {
+          const success = await updateTeeTime(initialData.courseId, formData);
+          if (success) {
+            router.push(`/tee-times/${initialData.courseId}`);
+          }
+        } else {
+          const teeTimeId = await createTeeTime(formData);
+          if (teeTimeId) {
+            router.push(`/tee-times/${teeTimeId}`);
+          }
+        }
+      } else if (onSubmit) {
+        // Use the provided callback
+        await onSubmit(formData);
       }
     } catch (error) {
       console.error('Error submitting tee time:', error);
@@ -138,7 +178,7 @@ export function TeeTimeForm({
 
   return (
     <Card className="max-w-2xl mx-auto">
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleFormSubmit}>
         <CardContent className="space-y-6 pt-6">
           <Heading level={3}>
             {isEditing ? 'Edit Tee Time' : 'Create Group Tee Time'}
@@ -200,19 +240,7 @@ export function TeeTimeForm({
               min={2}
               max={8}
               value={formData.maxPlayers.toString()}
-              onChange={(e) => {
-                setFormData(prev => ({
-                  ...prev,
-                  maxPlayers: parseInt(e.target.value) || 4
-                }));
-                
-                if (errors.maxPlayers) {
-                  setErrors(prev => ({
-                    ...prev,
-                    maxPlayers: ''
-                  }));
-                }
-              }}
+              onChange={handleInputChange}
               error={errors.maxPlayers}
               helper="Maximum number of players including yourself (2-8)"
             />
@@ -254,12 +282,14 @@ export function TeeTimeForm({
             type="button"
             variant="outline"
             onClick={handleCancel}
+            disabled={isProcessing}
           >
             Cancel
           </Button>
           <Button
             type="submit"
-            isLoading={isSubmitting}
+            isLoading={isProcessing}
+            disabled={isProcessing}
           >
             {isEditing ? 'Update Tee Time' : 'Create Tee Time'}
           </Button>

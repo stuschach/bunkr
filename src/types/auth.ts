@@ -12,6 +12,8 @@ export interface UserProfile {
   homeCourse: string | null;
   profileComplete: boolean;
   bio?: string | null;
+  displayNameLowercase?: string; // Lowercase version for search
+  role?: string; // User role
 }
 
 export interface LoginCredentials {

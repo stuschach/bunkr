@@ -138,12 +138,20 @@ export class HandicapService {
    */
   static async getUserHandicapHistory(userId: string, limit = 10): Promise<any[]> {
     try {
+      // Create composite filter for combined conditions
+      const recordsCollection = collection(db, 'handicapRecords');
+      const userIdFilter = where('userId', '==', userId);
+      const excludeLatestFilter = where('recordId', '!=', `${userId}_latest`);
+      const dateOrder = orderBy('date', 'desc');
+      const limitNum = limit as number;
+      
+      // Apply filters
       const handicapQuery = query(
-        collection(db, 'handicapRecords'),
-        where('userId', '==', userId),
-        where('recordId', '!=', `${userId}_latest`), // Exclude the "latest" record
-        orderBy('date', 'desc'),
-        limit
+        recordsCollection,
+        userIdFilter,
+        excludeLatestFilter, 
+        dateOrder,
+        limitNum
       );
       
       const handicapSnapshot = await getDocs(handicapQuery);

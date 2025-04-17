@@ -190,9 +190,31 @@ service cloud.firestore {
         );
       }
       
-      // User's tee times
-      match /teeTimes/{teeTimeId} {
-        allow read, write: if isOwner(userId);
+      // User's tee times - UPDATED with new rules for invitations
+      match /teeTimes/{recordId} {
+        allow read: if isSignedIn() && isOwner(userId);
+        
+        allow create: if isSignedIn() && (
+          // User can create their own tee time records
+          isOwner(userId) ||
+          
+          // Creator can add records for players they invite
+          (request.resource.data.teeTimeId != null &&
+           exists(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)) &&
+           get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid)
+        );
+        
+        allow update: if isSignedIn() && (
+          // User can update their own records
+          isOwner(userId) ||
+          
+          // Creator can update status for players in their tee times
+          (request.resource.data.teeTimeId != null &&
+           exists(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)) &&
+           get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid)
+        );
+        
+        allow delete: if isSignedIn() && isOwner(userId);
       }
       
       // User's saved marketplace listings
@@ -239,54 +261,51 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
     
-    // Notifications - UPDATED SECTION
+    // UPDATED: Notifications with improved tee time related types
     match /notifications/{notificationId} {
+      // Helper function to check if notification type is valid for tee times
+      function isValidTeeTimeNotification(type, actorId, entityId) {
+        return (type in ['tee-time-approved', 'tee-time-cancelled', 'tee-time-invite', 
+                         'tee-time-request', 'tee-time-created',
+                         'tee-time-invitation-accepted', 'tee-time-invitation-declined']) &&
+               (exists(/databases/$(database)/documents/teeTimes/$(entityId))) &&
+               (type == 'tee-time-request' || 
+                get(/databases/$(database)/documents/teeTimes/$(entityId)).data.creatorId == actorId);
+      }
+      
       // Helper function to check if notification type is a valid system type
       function isValidSystemNotification(type) {
         return type == 'handicap-updated' || 
                type == 'tournament-update' || 
                type == 'friend-activity' || 
-               type == 'course-review' ||
-               type == 'tee-time-approved' ||
-               type == 'tee-time-cancelled';
+               type == 'course-review';
       }
       
       // Read: Only the recipient can read their notifications
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
       
-      // Create: Actor can create, or system can create for specific types
+      // Create with validation
       allow create: if isSignedIn() && (
-        // User creating a notification where they are the actor
-        (request.resource.data.actorId == request.auth.uid) ||
+        // User can only create notifications where they are the actor
+        request.resource.data.actorId == request.auth.uid &&
         
-        // System notifications (with validation of types)
-        (request.resource.data.actorId == 'system' && 
-         isValidSystemNotification(request.resource.data.type))
+        // Validate notification type
+        (isValidTeeTimeNotification(request.resource.data.type, 
+                                   request.resource.data.actorId,
+                                   request.resource.data.entityId) ||
+         isValidSystemNotification(request.resource.data.type) ||
+         
+         // Allow other valid notification types
+         request.resource.data.type in ['like', 'comment', 'follow', 'mention', 'round-shared'])
       );
       
       // Update: Recipient can update (mark as read)
       allow update: if isSignedIn() && 
-        resource.data.userId == request.auth.uid &&
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['isRead']);
+        (resource.data.userId == request.auth.uid && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']));
       
       // Delete: Recipient can delete their notifications
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
-      
-      // Delete: Anyone can delete notifications for deleted content
-      allow delete: if isSignedIn() && (
-        // For deleted posts
-        (resource.data.entityType == 'post' && 
-         !exists(/databases/$(database)/documents/posts/$(resource.data.entityId))) ||
-        
-        // For deleted tee times
-        (resource.data.entityType == 'tee-time' && 
-         !exists(/databases/$(database)/documents/teeTimes/$(resource.data.entityId))) ||
-         
-        // For deleted rounds
-        (resource.data.entityType == 'round' && 
-         !exists(/databases/$(database)/documents/scorecards/$(resource.data.entityId)))
-      );
     }
     
     // Tournaments
@@ -434,7 +453,7 @@ service cloud.firestore {
     // Groups (looking for players)
     match /groups/{groupId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.creatorId == request.auth.uid;
       allow update: if isSignedIn() && (
         resource.data.createdBy == request.auth.uid || 
         resource.data.admins[request.auth.uid] == true
@@ -457,51 +476,122 @@ service cloud.firestore {
       }
     }
     
-    // Tee Times
+    // UPDATED: Tee Times with comprehensive security
     match /teeTimes/{teeTimeId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.creatorId == request.auth.uid;
-      allow update: if isSignedIn() && (
-        resource.data.creatorId == request.auth.uid || 
-        (request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['currentPlayers', 'status', 'updatedAt', 'isDeleted', 'deletedAt']))
+      // Helper function to check if user is a participant in a tee time
+      function isParticipant(teeTimeId, userId) {
+        let teeTimeDoc = get(/databases/$(database)/documents/teeTimes/$(teeTimeId));
+        return teeTimeDoc.data.creatorId == userId || 
+               exists(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(userId));
+      }
+      
+      // Allow read access with visibility restrictions
+      allow read: if isSignedIn() && (
+        // Public tee times are visible to all
+        resource.data.visibility == 'public' ||
+        // Creator can always see their own tee times
+        resource.data.creatorId == request.auth.uid ||
+        // Players can see tee times they're part of
+        exists(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(request.auth.uid)) ||
+        // Followers can see tee times with 'followers' visibility
+        (resource.data.visibility == 'followers' && exists(/databases/$(database)/documents/followRecords/$(resource.data.creatorId + '_' + request.auth.uid)))
       );
+      
+      // Allow creation with proper validation
+      allow create: if isSignedIn() && 
+                     request.resource.data.creatorId == request.auth.uid &&
+                     request.resource.data.maxPlayers >= 1 && 
+                     request.resource.data.maxPlayers <= 8 &&
+                     request.resource.data.visibility in ['public', 'private', 'followers'];
+      
+      // Allow updates by creator
+      allow update: if isSignedIn() && (
+        // Creator can update with restrictions
+        (resource.data.creatorId == request.auth.uid && 
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['creatorId'])) ||
+        
+        // Cloud Functions can update specific fields 
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentPlayers', 'updatedAt']))
+      );
+      
+      // Allow deletion by creator
       allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
       
-      // Players subcollection
+      // TEE TIME PLAYERS SUBCOLLECTION - UPDATED
       match /players/{playerId} {
-        allow read: if isSignedIn();
+        // Helper function to check player's role
+        function isInvitedPlayer(playerId) {
+          return get(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(playerId)).data.requestType == 'invitation';
+        }
+        
+        function isJoinRequester(playerId) {
+          return get(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(playerId)).data.requestType == 'join_request' ||
+                 !get(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(playerId)).data.requestType;
+        }
+    
+        // Allow reading if user is a participant
+        allow read: if isSignedIn() && isParticipant(teeTimeId, request.auth.uid);
+          
+        // Allow creation with proper validation
         allow create: if isSignedIn() && (
-          playerId == request.auth.uid || 
-          get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid
+          // Creator inviting a player
+          (get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid &&
+           request.resource.data.requestType == 'invitation') ||
+          
+          // Player requesting to join
+          (playerId == request.auth.uid &&
+           (request.resource.data.requestType == 'join_request' || !request.resource.data.requestType))
         );
+          
+        // Allow updates based on role and status
         allow update: if isSignedIn() && (
+          // Creator can update any player
           get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid ||
-          playerId == request.auth.uid
+          
+          // Player can update their own status when responding to invitation
+          (playerId == request.auth.uid &&
+           isInvitedPlayer(playerId) &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])) ||
+          
+          // Any player can update readBy field
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
         );
+          
+        // Allow deletion based on role
         allow delete: if isSignedIn() && (
+          // Creator can remove any player
           get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid ||
+          
+          // Player can remove themselves
           playerId == request.auth.uid
         );
       }
     }
     
+    // Tee time archive
+    match /teeTimesArchive/{teeTimeId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Only cloud functions should write here
+    }
+    
     // Tee Time Invitations
     match /tee-time-invitations/{invitationId} {
-      allow read: if isSignedIn() && (
-        resource.data.invitedBy == request.auth.uid ||
-        resource.data.invitedUserId == request.auth.uid
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (
+        // Creator inviting others
+        request.resource.data.inviterId == request.auth.uid &&
+        exists(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)) &&
+        get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid
       );
-      
-      allow create: if isSignedIn() && 
-        get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid;
-      
       allow update: if isSignedIn() && (
-        resource.data.invitedBy == request.auth.uid ||
-        resource.data.invitedUserId == request.auth.uid
+        // Creator can update invitation
+        resource.data.inviterId == request.auth.uid ||
+        
+        // Invitee can update status
+        resource.data.inviteeId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'responseDate'])
       );
-      
-      allow delete: if isSignedIn() && resource.data.invitedBy == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.inviterId == request.auth.uid;
     }
     
     // Marketplace listings

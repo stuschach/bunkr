@@ -1366,7 +1366,7 @@ export class MessagingService {
       
       // Update the messages cache for all page sizes
       const messagesKeys = await cacheService.getAllKeys();
-      const messageCacheKeys = messagesKeys.filter(key => key.startsWith(`messages_${chatId}`));
+      const messageCacheKeys = messagesKeys.filter((key: string) => key.startsWith(`messages_${chatId}`));
       
       for (const key of messageCacheKeys) {
         const cachedMessageBatch = await cacheService.get<MessageBatch>(key);

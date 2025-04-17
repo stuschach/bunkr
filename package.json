@@ -10,6 +10,7 @@
     "check-colors": "grep -r \"green-fairway\\|green-dark\\|sand-bunker\\|sky-light\" ./src --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.css\""
   },
   "dependencies": {
+    "@google-cloud/pubsub": "^4.11.0",
     "@tailwindcss/aspect-ratio": "^0.4.2",
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/typography": "^0.5.16",

@@ -13,7 +13,7 @@ interface UseFetchOnVisibleOptions {
 export function useFetchOnVisible(
   callback: () => void,
   options: UseFetchOnVisibleOptions = {}
-): React.RefObject<HTMLDivElement> {
+): React.RefObject<HTMLDivElement | null> {
   const { 
     root = null, 
     rootMargin = '0px', 

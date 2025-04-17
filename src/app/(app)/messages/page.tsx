@@ -65,25 +65,27 @@ function MessagesContent() {
   }, [unreadCounts.totalUnread]);
   
   // Handle chat selection with protection against redundant updates
-  const handleChatSelect = (chatId) => {
+  const handleChatSelect = (chatId: string | null) => {
     // Only update if we're selecting a different chat
     if (selectedChatId !== chatId) {
       // Clear any existing errors
       if (error) setError(null);
       
-      selectChat(chatId)
-        .catch(err => {
-          console.error("Error selecting chat:", err);
-          // The error will be handled in the context
-        })
-        .finally(() => {
-          // Update URL without full page reload
-          if (chatId) {
-            router.push(`/messages?chat=${chatId}`, { scroll: false });
-          } else {
-            router.push('/messages', { scroll: false });
-          }
-        });
+      if (chatId !== null) {
+        selectChat(chatId)
+          .catch(err => {
+            console.error("Error selecting chat:", err);
+            // The error will be handled in the context
+          })
+          .finally(() => {
+            // Update URL without full page reload
+            if (chatId) {
+              router.push(`/messages?chat=${chatId}`, { scroll: false });
+            } else {
+              router.push('/messages', { scroll: false });
+            }
+          });
+      }
     }
   };
   

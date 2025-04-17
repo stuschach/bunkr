@@ -1,11 +1,11 @@
-// src/index.ts
+// src/index.ts (Firebase Functions)
 import * as admin from 'firebase-admin';
 import * as logger from 'firebase-functions/logger';
 
 // Initialize Firebase Admin SDK
 admin.initializeApp();
 
-// Import and re-export the functions
+// Import and re-export existing functions
 export {
   deletePostReferences,
   onPostDeleted,
@@ -41,5 +41,18 @@ export {
   handicapFunctions
 } from './scorecard.functions';
 
+// Export tee time functions (new)
+export {
+  onTeeTimeCreated,
+  onTeeTimeUpdated,
+  onTeeTimeDeleted,
+  onPlayerAddedToTeeTime,
+  onPlayerUpdated,
+  onPlayerRemoved,
+  cleanupOldTeeTimes,
+  continueTeeTimeCleanup,
+  teeTimeFunctions
+} from './tee-time.functions';
+
 // Log initialization
-logger.info('Firebase Functions initialized');
+logger.info('Firebase Functions initialized with Tee Time functions');

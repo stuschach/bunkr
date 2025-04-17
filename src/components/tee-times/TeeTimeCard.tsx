@@ -1,7 +1,7 @@
 // src/components/tee-times/TeeTimeCard.tsx
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatDistance, format } from 'date-fns';
 import { Card, CardContent, CardFooter } from '@/components/ui/Card';
@@ -9,28 +9,70 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Text } from '@/components/ui/Typography';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { TeeTime, TeeTimeStatus } from '@/types/tee-times';
 import { UserProfile } from '@/types/auth';
-import { Clock, MapPin, Users, ChevronRight } from 'lucide-react';
+import { 
+  Clock, 
+  MapPin, 
+  Users, 
+  ChevronRight, 
+  AlertCircle,
+  Mail,
+  Info,
+  Check
+} from 'lucide-react';
+import { useAuth } from '@/lib/contexts/AuthContext';
+import { useTeeTime } from '@/lib/hooks/useTeeTime';
 
 interface TeeTimeCardProps {
   teeTime: TeeTime;
   creator?: UserProfile;
   onJoinRequest?: (teeTimeId: string) => Promise<void>;
   currentUserId?: string;
+  showDetails?: boolean;
 }
 
 export function TeeTimeCard({ 
   teeTime, 
   creator, 
   onJoinRequest,
-  currentUserId
+  currentUserId,
+  showDetails = true
 }: TeeTimeCardProps) {
   const router = useRouter();
-  const isCreator = currentUserId === teeTime.creatorId;
-  const hasJoined = teeTime.players?.some(player => 
-    player.userId === currentUserId && ['confirmed', 'pending'].includes(player.status)
+  const { user } = useAuth();
+  
+  // Use the tee time hook directly in the component
+  const { joinTeeTime, pendingOperations } = useTeeTime();
+  
+  // Local state
+  const [joinRequestLoading, setJoinRequestLoading] = useState(false);
+  
+  // Determine if the current user is the creator
+  const isCreator = user?.uid === teeTime.creatorId;
+  
+  // Check if the current user has been invited
+  const isInvited = user?.uid && teeTime.players?.some(player => 
+    player.userId === user.uid && 
+    player.status === 'pending' && 
+    player.requestType === 'invitation'
   );
+  
+  // Check if the current user has a pending request
+  const hasPendingRequest = user?.uid && teeTime.players?.some(player => 
+    player.userId === user.uid && 
+    player.status === 'pending' && 
+    (!player.requestType || player.requestType === 'join_request')
+  );
+  
+  // Determine if the current user has joined
+  const hasJoined = teeTime.players?.some(player => 
+    player.userId === user?.uid && player.status === 'confirmed'
+  );
+  
+  // Determine if user can join this tee time
+  const canJoin = !isCreator && !hasJoined && !hasPendingRequest && !isInvited && teeTime.status === 'open';
   
   // Calculate time remaining until tee time
   const timeRemaining = teeTime.dateTime ? formatDistance(
@@ -64,13 +106,33 @@ export function TeeTimeCard({
   };
   
   const handleViewDetails = () => {
+    if (!showDetails) return;
     router.push(`/tee-times/${teeTime.id}`);
   };
   
   const handleJoinRequest = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    
+    // If a custom join handler is provided, use it
     if (onJoinRequest) {
       await onJoinRequest(teeTime.id);
+      return;
+    }
+    
+    // Otherwise use the built-in join handler
+    if (!user) {
+      router.push('/login?returnUrl=/tee-times');
+      return;
+    }
+    
+    setJoinRequestLoading(true);
+    
+    try {
+      await joinTeeTime(teeTime.id);
+    } catch (error) {
+      console.error('Error joining tee time:', error);
+    } finally {
+      setJoinRequestLoading(false);
     }
   };
 
@@ -78,10 +140,13 @@ export function TeeTimeCard({
   const isToday = teeTime.dateTime ? 
     new Date(teeTime.dateTime).toDateString() === new Date().toDateString() : 
     false;
+    
+  // Check if any join operation is in progress for this tee time
+  const isJoining = joinRequestLoading || pendingOperations[`join_${teeTime.id}`];
 
   return (
     <Card 
-      className="cursor-pointer overflow-hidden transition-all duration-300 hover:shadow-lg border-gray-200 dark:border-gray-800 hover:border-green-300 dark:hover:border-green-700" 
+      className={`cursor-pointer overflow-hidden transition-all duration-300 hover:shadow-lg border-gray-200 dark:border-gray-800 hover:border-green-300 dark:hover:border-green-700 ${!showDetails ? 'pointer-events-none' : ''}`}
       onClick={handleViewDetails}
     >
       <div className="relative">
@@ -95,10 +160,10 @@ export function TeeTimeCard({
           <div className="absolute top-4 right-4 flex space-x-2">
             {getStatusBadge()}
             {teeTime.visibility === 'followers' && (
-              <Badge className="bg-gray-600 text-white hover:bg-gray-700 group-hover:translate-x-0">Followers Only</Badge>
+              <Badge className="bg-gray-600 text-white hover:bg-gray-700">Followers Only</Badge>
             )}
             {teeTime.visibility === 'private' && (
-              <Badge className="bg-gray-700 text-white hover:bg-gray-800 group-hover:translate-x-0">Private</Badge>
+              <Badge className="bg-gray-700 text-white hover:bg-gray-800">Private</Badge>
             )}
           </div>
         </div>
@@ -145,7 +210,7 @@ export function TeeTimeCard({
       <CardFooter className="border-t border-gray-100 dark:border-gray-800 px-6 py-4 bg-gray-50 dark:bg-gray-900/50">
         <div className="flex justify-between items-center w-full">
           <div className="flex items-center">
-            {creator && (
+            {creator ? (
               <>
                 <Avatar 
                   src={creator.photoURL} 
@@ -154,38 +219,73 @@ export function TeeTimeCard({
                   className="border-2 border-white dark:border-gray-900"
                 />
                 <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {creator.displayName}
+                  {creator.displayName || 'Anonymous User'}
+                </span>
+              </>
+            ) : (
+              <>
+                <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center">
+                  <Users className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+                </div>
+                <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Loading host...
                 </span>
               </>
             )}
           </div>
           
-          <div>
-            {!isCreator && !hasJoined && teeTime.status === 'open' && (
+          <div onClick={e => e.stopPropagation()}>
+            {canJoin && (
               <Button 
                 size="sm" 
                 onClick={handleJoinRequest}
+                isLoading={isJoining}
+                disabled={isJoining}
                 className="bg-green-500 hover:bg-green-600 text-white font-medium rounded-full px-4 flex items-center"
               >
-                Join Group
+                {isJoining ? 'Joining...' : 'Join Group'}
                 <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             )}
+            {hasPendingRequest && (
+              <Tooltip content="Your request to join is pending approval from the host">
+                <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100 px-3 py-1">
+                  <span className="flex items-center">
+                    <AlertCircle className="h-3 w-3 mr-1" />
+                    Pending
+                  </span>
+                </Badge>
+              </Tooltip>
+            )}
+            {isInvited && (
+              <Tooltip content="You've been invited to join this tee time">
+                <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100 px-3 py-1">
+                  <span className="flex items-center">
+                    <Mail className="h-3 w-3 mr-1" />
+                    Invited
+                  </span>
+                </Badge>
+              </Tooltip>
+            )}
             {hasJoined && !isCreator && (
-              <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100 px-3 py-1">
-                <span className="flex items-center">
-                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2 animate-pulse"></span>
-                  Joined
-                </span>
-              </Badge>
+              <Tooltip content="You're confirmed for this tee time">
+                <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100 px-3 py-1">
+                  <span className="flex items-center">
+                    <Check className="h-3 w-3 mr-1" />
+                    Joined
+                  </span>
+                </Badge>
+              </Tooltip>
             )}
             {isCreator && (
-              <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100 px-3 py-1">
-                <span className="flex items-center">
-                  <span className="h-2 w-2 rounded-full bg-blue-500 mr-2"></span>
-                  Hosting
-                </span>
-              </Badge>
+              <Tooltip content="You're hosting this tee time">
+                <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100 px-3 py-1">
+                  <span className="flex items-center">
+                    <Users className="h-3 w-3 mr-1" />
+                    Hosting
+                  </span>
+                </Badge>
+              </Tooltip>
             )}
           </div>
         </div>
