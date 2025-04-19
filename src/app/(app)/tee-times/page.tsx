@@ -1,7 +1,7 @@
 // src/app/(app)/tee-times/page.tsx
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useTeeTime } from '@/lib/hooks/useTeeTime';
@@ -37,7 +37,7 @@ export default function TeeTimes() {
     error, 
     getPublicTeeTimesList, 
     getUserProfile,
-    getUsersByIds, // Added for batch loading of profiles
+    getUsersByIds,
     joinTeeTime,
     pendingOperations,
     showToast
@@ -57,6 +57,10 @@ export default function TeeTimes() {
   const [searchQuery, setSearchQuery] = useState('');
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [initialLoading, setInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // NEW: Add a refreshKey state to force refresh when needed
+  const [refreshKey, setRefreshKey] = useState(0);
   
   // Load tee times with optimized profile fetching
   const fetchTeeTimes = useCallback(async (reset: boolean = false) => {
@@ -104,13 +108,46 @@ export default function TeeTimes() {
     } finally {
       setInitialLoading(false);
       setLoadingMore(false);
+      setIsRefreshing(false);
     }
   }, [filters, lastVisible, getPublicTeeTimesList, getUsersByIds]);
+  
+  // NEW: Add a refresh function for manual refresh
+  const handleRefresh = useCallback(() => {
+    if (isRefreshing) return;
+    
+    setIsRefreshing(true);
+    setRefreshKey(prevKey => prevKey + 1);
+  }, [isRefreshing]);
+  
+  // NEW: Add window focus event listener to refresh data when user returns to the tab
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Only refresh if it's been at least 30 seconds since initial load
+        const lastRefreshTime = Number(sessionStorage.getItem('lastTeeTimesRefresh') || '0');
+        const now = Date.now();
+        
+        if (now - lastRefreshTime > 30000) { // 30 seconds
+          handleRefresh();
+          sessionStorage.setItem('lastTeeTimesRefresh', now.toString());
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [handleRefresh]);
   
   // Load initial tee times
   useEffect(() => {
     fetchTeeTimes(true);
-  }, []);
+    // Store refresh timestamp
+    sessionStorage.setItem('lastTeeTimesRefresh', Date.now().toString());
+  }, [refreshKey]); // NEW: Added refreshKey to dependencies
   
   // Handle filter changes
   const handleFilterChange = (newFilters: TeeTimeFilters) => {
@@ -267,9 +304,24 @@ export default function TeeTimes() {
         />
         
         <div className="flex justify-between items-center mb-6">
-          <Text className="text-gray-600 dark:text-gray-400">
-            {filteredTeeTimes.length} tee {filteredTeeTimes.length === 1 ? 'time' : 'times'} found
-          </Text>
+          <div className="flex items-center">
+            <Text className="text-gray-600 dark:text-gray-400">
+              {filteredTeeTimes.length} tee {filteredTeeTimes.length === 1 ? 'time' : 'times'} found
+            </Text>
+            
+            {/* NEW: Add manual refresh button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              isLoading={isRefreshing}
+              disabled={isRefreshing}
+              className="ml-2"
+              aria-label="Refresh tee times"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
           
           <div className="flex items-center space-x-2">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex overflow-hidden">
@@ -320,7 +372,7 @@ export default function TeeTimes() {
             </Text>
             <Button 
               variant="outline" 
-              onClick={() => fetchTeeTimes(true)}
+              onClick={handleRefresh}
               className="inline-flex items-center"
             >
               <RefreshCw className="h-4 w-4 mr-2" />

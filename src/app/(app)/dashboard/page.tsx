@@ -24,6 +24,7 @@ import { WeatherWidget } from '@/components/dashboard/WeatherWidget';
 // Types
 import { Scorecard } from '@/types/scorecard';
 import { UserProfile } from '@/types/auth';
+import { TeeTime } from '@/types/tee-times';
 
 // Date and formatting utilities
 import { formatShortDate, getRelativeTimeString } from '@/lib/utils/date-format';
@@ -45,7 +46,7 @@ export default function DashboardPage() {
   // State for dashboard data
   const [isLoading, setIsLoading] = useState(true);
   const [recentRounds, setRecentRounds] = useState<Scorecard[]>([]);
-  const [upcomingTeeTimes, setUpcomingTeeTimes] = useState<any[]>([]);
+  const [upcomingTeeTimes, setUpcomingTeeTimes] = useState<TeeTime[]>([]);
   const [suggestedUsers, setSuggestedUsers] = useState<UserProfile[]>([]);
   const [userHandicap, setUserHandicap] = useState<number | null>(null);
   const [handicapTrend, setHandicapTrend] = useState<'improving' | 'declining' | 'stable'>('stable');
@@ -110,7 +111,7 @@ export default function DashboardPage() {
     }
   }, [user, chats, getMessages]);
 
-  // Load dashboard data - memoized
+  // Load dashboard data - memoized with improved error handling
   const loadDashboardData = useCallback(async () => {
     // Skip if already loaded or component unmounted
     if (dataLoadedRef.current || !isMountedRef.current || !user) return;
@@ -193,33 +194,55 @@ export default function DashboardPage() {
         }
       }
 
-      // 3. Fetch upcoming tee times
+      // 3. Fetch upcoming tee times - FIXED
       try {
-        // Get all tee times for the user using the hook
-        const allTeeTimes = await getUserTeeTimes();
+        // Get all tee times for the user using the hook with proper type handling
+        const { teeTimes = [] } = await getUserTeeTimes();
         
-        // Filter to only future tee times
-        const today = new Date();
-        const futureTeeTimes = allTeeTimes.filter(teeTime => {
-          const teeTimeDate = ensureDate(teeTime.dateTime);
-          return teeTimeDate >= today && teeTime.status !== 'cancelled';
-        });
+        // Ensure we have an array (even if API returns undefined)
+        const allTeeTimes = Array.isArray(teeTimes) ? teeTimes : [];
         
-        // Sort by date (ascending) and take the first 3
-        futureTeeTimes.sort((a, b) => {
-          const dateA = ensureDate(a.dateTime);
-          const dateB = ensureDate(b.dateTime);
-          return dateA.getTime() - dateB.getTime();
-        });
-        
-        // Take only the first 3 tee times
-        const upcomingTeeTimesList = futureTeeTimes.slice(0, 3);
-        
-        if (isMountedRef.current) {
-          setUpcomingTeeTimes(upcomingTeeTimesList);
+        if (allTeeTimes.length > 0) {
+          // Filter to only future tee times
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          // Use a try-catch block for the filtering to handle potential data issues
+          try {
+            const futureTeeTimes = allTeeTimes.filter(teeTime => {
+              // Ensure teeTime exists and has valid data
+              if (!teeTime || !teeTime.dateTime) return false;
+              
+              const teeTimeDate = ensureDate(teeTime.dateTime);
+              return teeTimeDate >= today && teeTime.status !== 'cancelled';
+            });
+            
+            // Sort by date (ascending) and take the first 3
+            futureTeeTimes.sort((a, b) => {
+              const dateA = ensureDate(a.dateTime || new Date());
+              const dateB = ensureDate(b.dateTime || new Date());
+              return dateA.getTime() - dateB.getTime();
+            });
+            
+            // Take only the first 3 tee times
+            const upcomingTeeTimesList = futureTeeTimes.slice(0, 3);
+            
+            if (isMountedRef.current) {
+              setUpcomingTeeTimes(upcomingTeeTimesList);
+            }
+          } catch (filterError) {
+            console.error('Error filtering tee times:', filterError);
+            // Set empty array on filter error to avoid UI issues
+            if (isMountedRef.current) {
+              setUpcomingTeeTimes([]);
+            }
+          }
         }
       } catch (teeTimeError) {
         console.error('Error fetching tee times:', teeTimeError);
+        if (isMountedRef.current) {
+          setUpcomingTeeTimes([]);
+        }
       }
 
       // 4. Fetch suggested golfers with similar handicaps
@@ -635,4 +658,32 @@ export default function DashboardPage() {
       </div>
     </div>
   );
+}
+
+// src/lib/utils/date-format.ts
+// Add this function if it doesn't already exist
+
+/**
+ * Ensures a value is converted to a valid Date object
+ * Handles various date formats including Firestore timestamps
+ */
+export function ensureDate(dateValue: any): Date {
+  if (!dateValue) return new Date(0); // Default to epoch if undefined
+  
+  if (dateValue instanceof Date) {
+    return dateValue;
+  }
+  
+  // Handle Firestore timestamp objects
+  if (typeof dateValue === 'object' && dateValue !== null && typeof dateValue.toDate === 'function') {
+    return dateValue.toDate();
+  }
+  
+  // Handle string/number dates
+  try {
+    return new Date(dateValue);
+  } catch (e) {
+    console.error('Failed to parse date:', dateValue);
+    return new Date(0);
+  }
 }

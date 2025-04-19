@@ -2,8 +2,7 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import * as logger from 'firebase-functions/logger';
-import { SHARD_SIZE, MAX_SHARDS } from '../lib/constants';
-
+import { SHARD_SIZE, MAX_SHARDS } from './lib/constants';
 // Define the interface directly to avoid import issues
 interface UserProfile {
   uid: string;

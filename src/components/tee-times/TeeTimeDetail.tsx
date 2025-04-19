@@ -1,45 +1,55 @@
 // src/components/tee-times/TeeTimeDetail.tsx
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { format, isPast, formatDistance } from 'date-fns';
-import Image from 'next/image';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useTeeTime } from '@/lib/hooks/useTeeTime';
-import { Button } from '@/components/ui/Button';
+import { useUsers } from '@/lib/hooks/useUsers';
+import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
+import { useToast } from '@/lib/hooks/useToast';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar';
+import { Button } from '@/components/ui/Button';
 import { Heading, Text } from '@/components/ui/Typography';
+import { Badge } from '@/components/ui/Badge';
 import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { TeeTimePlayersList } from '@/components/tee-times/TeeTimePlayersList';
-import { UserSearchModal } from '@/components/tee-times/UserSearchModal';
-import { TeeTime, TeeTimePlayer, UserProfile } from '@/types/tee-times';
+import { TeeTime, TeeTimePlayer } from '@/types/tee-times';
+import { UserProfile } from '@/types/auth';
 import { 
-  Clock, 
-  Calendar, 
-  Trophy, 
-  MapPin, 
-  Users, 
-  Plus, 
-  Edit, 
-  AlertCircle,
+  InfoIcon, 
+  Bell, 
+  CalendarIcon, 
+  ClockIcon, 
+  MapPinIcon, 
+  UsersIcon,
+  AlertTriangle,
   Check,
   X,
+  Users,
+  Clock,
+  Calendar,
+  Mail,
+  Edit,
+  Plus,
   Trash2,
   Globe,
   Lock,
   Eye,
   Share2,
-  InfoIcon,
-  Mail
+  AlertCircle,
+  Trophy,
+  MapPin
 } from 'lucide-react';
+import { Avatar } from '@/components/ui/Avatar';
 import { ConfirmationDialog } from '@/components/common/dialogs/ConfirmationDialog';
 import { EditTeeTimeForm } from '@/components/tee-times/EditTeeTimeForm';
 import { TeeTimeInvitation } from '@/components/tee-times/TeeTimeInvitation';
 import { Separator } from '@/components/ui/Separator';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { UserSearchModal } from '@/components/tee-times/UserSearchModal';
 
 interface TeeTimeDetailProps {
   teeTimeId: string;
@@ -48,13 +58,15 @@ interface TeeTimeDetailProps {
 export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
   const router = useRouter();
   const { user } = useAuth();
+  const { showToast } = useToast();
+  
+  // Use both hooks - useTeeTime for tee time operations and useUsers for user profile operations
   const { 
     isLoading, 
     error, 
     getTeeTimeDetails, 
-    getUserProfile,
     cancelTeeTime, 
-    deleteTeeTime, // Import the new deleteTeeTime function
+    deleteTeeTime,
     approvePlayer, 
     removePlayer,
     invitePlayer,
@@ -63,6 +75,13 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
     subscribeTeeTime,
     subscribeTeeTimePlayers
   } = useTeeTime();
+
+  // Explicitly use the useUsers hook for user-related operations
+  const { 
+    getUserById, 
+    getUsersByIds, 
+    loading: userLoading 
+  } = useUsers();
   
   // States
   const [teeTime, setTeeTime] = useState<TeeTime | null>(null);
@@ -71,15 +90,38 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
   const [showEditForm, setShowEditForm] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); // New state for delete confirmation
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRemovePlayerConfirm, setShowRemovePlayerConfirm] = useState<string | null>(null);
   const [isUserInvited, setIsUserInvited] = useState(false);
   const [invitationStatus, setInvitationStatus] = useState<'pending' | 'accepted' | 'declined' | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false); // Track local deletion state
+  
+  // Refs to prevent infinite loops
+  const loadingAttemptedRef = useRef<Record<string, boolean>>({});
+  const isMountedRef = useRef(true); // Track if component is mounted
+  const initialLoadCompletedRef = useRef(false);
+  const unsubscribersRef = useRef<(() => void)[]>([]); // Store unsubscribe functions
+
+  // Set up cleanup for mounted ref and listeners
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Clean up all listeners when component unmounts
+      unsubscribersRef.current.forEach(unsubscribe => {
+        try {
+          unsubscribe();
+        } catch (err) {
+          console.error('Error unsubscribing:', err);
+        }
+      });
+      unsubscribersRef.current = [];
+    };
+  }, []);
   
   // Function to get tee time details
   const fetchTeeTimeDetails = useCallback(async () => {
-    if (!teeTimeId) {
-      router.push('/tee-times');
+    if (!teeTimeId || !isMountedRef.current) {
       return;
     }
     
@@ -92,17 +134,65 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
         return;
       }
       
-      setTeeTime(teeTimeData);
-      setPlayers(playersData);
+      if (isMountedRef.current) {
+        setTeeTime(teeTimeData);
+      }
       
-      // Get creator profile
-      if (teeTimeData.creatorId) {
-        const creatorProfile = await getUserProfile(teeTimeData.creatorId);
-        setCreatorProfile(creatorProfile);
+      // Get all player IDs including the creator
+      const userIds = [
+        ...playersData.map(p => p.userId),
+        teeTimeData.creatorId
+      ].filter(Boolean);
+      
+      // Check if getUsersByIds is available, fall back to individual fetches if not
+      if (getUsersByIds && userIds.length > 0) {
+        const uniqueUserIds = [...new Set(userIds)];
+        try {
+          const profiles = await getUsersByIds(uniqueUserIds);
+          
+          if (!isMountedRef.current) return;
+          
+          // Add profiles to player data
+          const playersWithProfiles = playersData.map(player => ({
+            ...player,
+            profile: profiles[player.userId] || undefined
+          }));
+          
+          setPlayers(playersWithProfiles);
+          
+          // Set creator profile
+          if (teeTimeData.creatorId && profiles[teeTimeData.creatorId]) {
+            setCreatorProfile(profiles[teeTimeData.creatorId]);
+          }
+        } catch (error) {
+          console.error('Error fetching profiles in batch:', error);
+          // Fall back to setting players without profiles
+          if (isMountedRef.current) {
+            setPlayers(playersData);
+          }
+        }
+      } else {
+        // Fall back to individual profile fetches or setting players without profiles
+        if (isMountedRef.current) {
+          setPlayers(playersData);
+          
+          // Try to load creator profile individually
+          if (teeTimeData.creatorId && getUserById && !loadingAttemptedRef.current[teeTimeData.creatorId]) {
+            loadingAttemptedRef.current[teeTimeData.creatorId] = true;
+            try {
+              const profile = await getUserById(teeTimeData.creatorId);
+              if (profile && isMountedRef.current) {
+                setCreatorProfile(profile);
+              }
+            } catch (err) {
+              console.error('Error fetching creator profile:', err);
+            }
+          }
+        }
       }
       
       // Check if current user is invited
-      if (user) {
+      if (user && isMountedRef.current) {
         const currentUserPlayer = playersData.find(p => p.userId === user.uid);
         
         setIsUserInvited(
@@ -122,47 +212,92 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
           setInvitationStatus(null);
         }
       }
+      
+      initialLoadCompletedRef.current = true;
     } catch (error) {
       console.error('Error fetching tee time details:', error);
     }
-  }, [teeTimeId, user, getTeeTimeDetails, getUserProfile, router]);
+  }, [teeTimeId, user, getTeeTimeDetails, getUsersByIds, getUserById, router]);
   
-  // Set up real-time listeners for tee time and players
-  useEffect(() => {
-    if (!teeTimeId) return;
+  // Enhanced processing of player updates - fixed to avoid circular dependency
+  const processPlayerUpdates = useCallback(async (updatedPlayers: TeeTimePlayer[]) => {
+    if (!isMountedRef.current) return;
     
-    // Subscribe to tee time updates
-    const unsubscribeTeeTime = subscribeTeeTime(teeTimeId, (updatedTeeTime) => {
-      if (updatedTeeTime) {
-        setTeeTime(updatedTeeTime);
-      } else {
-        // Tee time was deleted or not found
-        router.push('/tee-times?error=tee-time-not-found');
-      }
-    });
-    
-    // Subscribe to player updates
-    const unsubscribePlayers = subscribeTeeTimePlayers(teeTimeId, async (updatedPlayers) => {
-      // Get profiles for players
-      const playersWithProfiles = await Promise.all(
-        updatedPlayers.map(async (player) => {
-          // Check if we already have this player's profile
-          const existingPlayer = players.find(p => p.userId === player.userId);
-          if (existingPlayer?.profile) {
-            return { ...player, profile: existingPlayer.profile };
-          }
-          
-          // Otherwise get the profile
-          const profile = await getUserProfile(player.userId);
-          return { ...player, profile };
-        })
-      );
+    try {
+      // Filter to only players that need profiles
+      const playersNeedingProfiles = updatedPlayers.filter(player => {
+        // Find if we already have this player's profile
+        const existingPlayer = players.find(p => p.userId === player.userId);
+        return !existingPlayer?.profile;
+      });
       
-      setPlayers(playersWithProfiles);
+      const playerIdsNeedingProfiles = playersNeedingProfiles.map(p => p.userId);
+      
+      // Only fetch new profiles if needed and if getUsersByIds is available
+      if (playerIdsNeedingProfiles.length > 0 && getUsersByIds) {
+        // Get unique IDs to fetch
+        const uniquePlayerIds = [...new Set(playerIdsNeedingProfiles)];
+        
+        try {
+          // Fetch profiles in batch
+          const newProfiles = await getUsersByIds(uniquePlayerIds);
+          
+          if (!isMountedRef.current) return;
+          
+          // Create a map of existing profiles
+          const existingProfiles: Record<string, UserProfile | undefined> = {};
+          players.forEach(player => {
+            if (player.profile) {
+              existingProfiles[player.userId] = player.profile;
+            }
+          });
+          
+          // Combine profiles - use existing ones first, fallback to new ones
+          const combinedProfiles = {
+            ...existingProfiles,
+            ...newProfiles
+          };
+          
+          // Combine updated players with their profiles
+          const playersWithProfiles = updatedPlayers.map(player => ({
+            ...player,
+            profile: combinedProfiles[player.userId]
+          }));
+          
+          setPlayers(playersWithProfiles);
+        } catch (error) {
+          console.error('Error fetching batch user profiles:', error);
+          // Fall back to just updating player data without profiles
+          setPlayers(prevPlayers => {
+            const result = updatedPlayers.map(player => {
+              // Try to find existing player data to preserve profile
+              const existingPlayer = prevPlayers.find(p => p.userId === player.userId);
+              return {
+                ...player,
+                profile: existingPlayer?.profile
+              };
+            });
+            return result;
+          });
+        }
+      } else {
+        // No new profiles needed or getUsersByIds not available, just update players
+        setPlayers(prevPlayers => {
+          const result = updatedPlayers.map(player => {
+            // Try to find existing player data to preserve profile
+            const existingPlayer = prevPlayers.find(p => p.userId === player.userId);
+            return {
+              ...player,
+              profile: existingPlayer?.profile
+            };
+          });
+          return result;
+        });
+      }
       
       // Update invitation status for current user
       if (user) {
-        const currentUserPlayer = playersWithProfiles.find(p => p.userId === user.uid);
+        const currentUserPlayer = updatedPlayers.find(p => p.userId === user.uid);
         
         setIsUserInvited(
           !!currentUserPlayer && 
@@ -181,16 +316,95 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
           setInvitationStatus(null);
         }
       }
+    } catch (error) {
+      console.error('Error processing player updates:', error);
+    }
+  }, [getUsersByIds, user, players]);
+  
+  // Set up real-time listeners for tee time and players
+  useEffect(() => {
+    if (!teeTimeId) return;
+    
+    // Clear any previous unsubscribers
+    unsubscribersRef.current.forEach(unsubscribe => {
+      try {
+        unsubscribe();
+      } catch (err) {
+        console.error('Error unsubscribing:', err);
+      }
+    });
+    unsubscribersRef.current = [];
+    
+    // Subscribe to tee time updates
+    const unsubscribeTeeTime = subscribeTeeTime(teeTimeId, async (updatedTeeTime) => {
+      if (!isMountedRef.current) return;
+      
+      if (updatedTeeTime) {
+        setTeeTime(updatedTeeTime);
+        
+        // Only fetch creator profile if not already loaded
+        if (updatedTeeTime.creatorId && !creatorProfile && !loadingAttemptedRef.current[updatedTeeTime.creatorId]) {
+          // Mark as attempted
+          loadingAttemptedRef.current[updatedTeeTime.creatorId] = true;
+          
+          if (getUserById) {
+            try {
+              const profile = await getUserById(updatedTeeTime.creatorId);
+              if (profile && isMountedRef.current) {
+                setCreatorProfile(profile);
+              }
+            } catch (error) {
+              console.error('Error fetching creator profile:', error);
+            }
+          }
+        }
+      } else {
+        // Tee time was deleted or not found
+        if (!isDeleting) { // Only redirect if we're not in the middle of our own deletion
+          router.push('/tee-times?error=tee-time-not-found');
+        }
+      }
     });
     
-    // Load initial data
-    fetchTeeTimeDetails();
+    // Store the unsubscribe function
+    unsubscribersRef.current.push(unsubscribeTeeTime);
     
+    // Subscribe to player updates
+    const unsubscribePlayers = subscribeTeeTimePlayers(teeTimeId, (updatedPlayers) => {
+      if (isMountedRef.current) {
+        processPlayerUpdates(updatedPlayers);
+      }
+    });
+    
+    // Store the unsubscribe function
+    unsubscribersRef.current.push(unsubscribePlayers);
+    
+    // Load initial data if needed
+    if (!initialLoadCompletedRef.current) {
+      fetchTeeTimeDetails();
+    }
+    
+    // Clean up on unmount or when teeTimeId changes
     return () => {
-      unsubscribeTeeTime();
-      unsubscribePlayers();
+      unsubscribersRef.current.forEach(unsubscribe => {
+        try {
+          unsubscribe();
+        } catch (err) {
+          console.error('Error unsubscribing:', err);
+        }
+      });
+      unsubscribersRef.current = [];
     };
-  }, [teeTimeId, user, fetchTeeTimeDetails, subscribeTeeTime, subscribeTeeTimePlayers, getUserProfile, players, router]);
+  }, [
+    teeTimeId, 
+    fetchTeeTimeDetails, 
+    subscribeTeeTime, 
+    subscribeTeeTimePlayers, 
+    getUserById, 
+    processPlayerUpdates, 
+    router,
+    isDeleting
+  ]);
   
   // Handle approving a player
   const handleApprovePlayer = async (playerId: string) => {
@@ -200,6 +414,13 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
       await approvePlayer(teeTimeId, playerId);
     } catch (error) {
       console.error('Error approving player:', error);
+      
+      // Show error toast
+      showToast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to approve player',
+        variant: 'error'
+      });
     }
   };
   
@@ -212,6 +433,13 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
       setShowRemovePlayerConfirm(null);
     } catch (error) {
       console.error('Error removing player:', error);
+      
+      // Show error toast
+      showToast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to remove player',
+        variant: 'error'
+      });
     }
   };
   
@@ -227,6 +455,13 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
       }
     } catch (error) {
       console.error('Error inviting player:', error);
+      
+      // Show error toast
+      showToast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to invite player',
+        variant: 'error'
+      });
     }
   };
   
@@ -244,6 +479,13 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
       }
     } catch (error) {
       console.error(`Error ${response === 'accept' ? 'accepting' : 'declining'} invitation:`, error);
+      
+      // Show error toast
+      showToast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : `Failed to ${response} invitation`,
+        variant: 'error'
+      });
     }
   };
   
@@ -256,26 +498,106 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
       
       if (success) {
         setShowCancelConfirm(false);
+        
+        // Show success toast
+        showToast({
+          title: 'Tee time cancelled',
+          description: 'Your tee time has been cancelled',
+          variant: 'success'
+        });
+        
+        // Navigate to my tee times page
         router.push('/tee-times/my');
       }
     } catch (error) {
       console.error('Error cancelling tee time:', error);
+      
+      // Show error toast
+      showToast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to cancel tee time',
+        variant: 'error'
+      });
     }
   };
 
-  // Handle deleting tee time
+  // Enhanced delete handler to properly clean up listeners
   const handleDeleteTeeTime = async () => {
     if (!teeTimeId || !user) return;
     
     try {
-      const success = await deleteTeeTime(teeTimeId);
+      // First set local deleting state
+      setIsDeleting(true);
+      setShowDeleteConfirm(false);
       
-      if (success) {
-        setShowDeleteConfirm(false);
-        router.push('/tee-times/my');
-      }
+      // Clear listeners before delete to prevent Firebase errors
+      unsubscribersRef.current.forEach(unsubscribe => {
+        try {
+          unsubscribe();
+        } catch (err) {
+          console.error('Error unsubscribing:', err);
+        }
+      });
+      unsubscribersRef.current = [];
+      
+      // Set isMounted to false to prevent any state updates during deletion
+      isMountedRef.current = false;
+      
+      // Perform deletion with a slight delay to ensure listeners are cleaned up
+      setTimeout(async () => {
+        try {
+          const success = await deleteTeeTime(teeTimeId);
+          
+          if (success) {
+            // Show success toast
+            showToast({
+              title: 'Tee time deleted',
+              description: 'Your tee time has been successfully deleted',
+              variant: 'success'
+            });
+            
+            // Navigate away
+            router.push('/tee-times/my');
+          } else {
+            // If deletion failed, restore mounted state
+            isMountedRef.current = true;
+            setIsDeleting(false);
+            
+            // Show error
+            showToast({
+              title: 'Error',
+              description: 'Failed to delete tee time',
+              variant: 'error'
+            });
+          }
+        } catch (error) {
+          console.error('Error in delete timeout:', error);
+          
+          // If deletion failed, restore mounted state
+          isMountedRef.current = true;
+          setIsDeleting(false);
+          
+          // Show error
+          showToast({
+            title: 'Error',
+            description: error instanceof Error ? error.message : 'Failed to delete tee time',
+            variant: 'error'
+          });
+        }
+      }, 300); // Small delay to ensure listeners are removed
     } catch (error) {
       console.error('Error deleting tee time:', error);
+      
+      // If deletion failed, restore state
+      isMountedRef.current = true;
+      setIsDeleting(false);
+      
+      // Show error toast
+      showToast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to delete tee time',
+        variant: 'error'
+      });
     }
   };
   
@@ -294,7 +616,11 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
     } else {
       // Fallback to clipboard
       navigator.clipboard.writeText(shareUrl).then(() => {
-        alert('Link copied to clipboard!');
+        showToast({
+          title: 'Link copied',
+          description: 'Tee time link copied to clipboard',
+          variant: 'success'
+        });
       }).catch(err => {
         console.error('Failed to copy:', err);
       });
@@ -302,10 +628,11 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
   };
   
   // Loading state
-  if (isLoading && !teeTime) {
+  if ((isLoading && !teeTime) || isDeleting) {
     return (
       <div className="flex justify-center items-center min-h-[70vh]">
         <LoadingSpinner size="lg" color="primary" />
+        {isDeleting && <Text className="ml-3">Deleting tee time...</Text>}
       </div>
     );
   }
@@ -387,7 +714,8 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
     player.status === 'confirmed'
   );
 
-  const isDeleting = pendingOperations[`delete_${teeTimeId}`];
+  // Check if delete operation is pending in context
+  const deletionPending = pendingOperations[`delete_${teeTimeId}`];
 
   return (
     <div className="container mx-auto px-4 py-6">
@@ -596,16 +924,23 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
               <div>
                 <Text className="text-sm text-gray-500 dark:text-gray-400 font-medium">Host</Text>
                 <div className="flex items-center mt-1">
-                  {creatorProfile && (
+                  {userLoading[teeTime.creatorId] ? (
+                    <div className="flex items-center">
+                      <LoadingSpinner size="sm" className="mr-2" />
+                      <Text>Loading host...</Text>
+                    </div>
+                  ) : creatorProfile ? (
                     <>
-                      <Avatar className="h-6 w-6 mr-2">
-                        <AvatarImage src={creatorProfile.photoURL || undefined} />
-                        <AvatarFallback>
-                          {creatorProfile.displayName?.charAt(0) || 'U'}
-                        </AvatarFallback>
-                      </Avatar>
-                      <Text className="font-medium">{creatorProfile.displayName}</Text>
+                      <Avatar 
+                        src={creatorProfile.photoURL}
+                        alt={creatorProfile.displayName || 'Unknown Host'}
+                        size="sm"
+                        className="mr-2"
+                      />
+                      <Text className="font-medium">{creatorProfile.displayName || 'Unknown Host'}</Text>
                     </>
+                  ) : (
+                    <Text className="font-medium">Unknown Host</Text>
                   )}
                 </div>
               </div>
@@ -654,10 +989,10 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
                 <Button 
                   onClick={() => setShowDeleteConfirm(true)}
                   variant="destructive"
-                  disabled={isDeleting}
+                  disabled={deletionPending || isDeleting}
                 >
                   <Trash2 className="h-4 w-4 mr-2" />
-                  {isDeleting ? 'Deleting...' : 'Delete Tee Time'}
+                  {deletionPending || isDeleting ? 'Deleting...' : 'Delete Tee Time'}
                 </Button>
               </div>
             )}
@@ -687,14 +1022,14 @@ export function TeeTimeDetail({ teeTimeId }: TeeTimeDetailProps) {
               <div className="flex flex-wrap gap-2">
                 {pendingPlayers.slice(0, 3).map(player => (
                   <div key={player.userId} className="flex items-center bg-white dark:bg-gray-800 rounded-full px-3 py-1.5 shadow-sm">
-                    <Avatar className="h-6 w-6 mr-2">
-                      <AvatarImage src={player.profile?.photoURL || undefined} />
-                      <AvatarFallback>
-                        {player.profile?.displayName?.charAt(0) || 'U'}
-                      </AvatarFallback>
-                    </Avatar>
+                    <Avatar 
+                      src={player.profile?.photoURL}
+                      alt={player.profile?.displayName || 'Unknown Player'}
+                      size="sm"
+                      className="mr-2"
+                    />
                     <span className="font-medium text-sm">
-                      {player.profile?.displayName || 'Unknown Player'}
+                      {player.profile?.displayName || (userLoading[player.userId] ? 'Loading...' : 'Unknown Player')}
                     </span>
                   </div>
                 ))}

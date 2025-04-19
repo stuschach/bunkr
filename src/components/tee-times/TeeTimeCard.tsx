@@ -1,7 +1,7 @@
 // src/components/tee-times/TeeTimeCard.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatDistance, format } from 'date-fns';
 import { Card, CardContent, CardFooter } from '@/components/ui/Card';
@@ -20,10 +20,13 @@ import {
   AlertCircle,
   Mail,
   Info,
-  Check
+  Check,
+  User
 } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useTeeTime } from '@/lib/hooks/useTeeTime';
+import { useUsers } from '@/lib/hooks/useUsers'; // Added useUsers hook
+import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 
 interface TeeTimeCardProps {
   teeTime: TeeTime;
@@ -43,11 +46,13 @@ export function TeeTimeCard({
   const router = useRouter();
   const { user } = useAuth();
   
-  // Use the tee time hook directly in the component
+  // Use both hooks for data fetching
   const { joinTeeTime, pendingOperations } = useTeeTime();
+  const { getUserById, loading: userLoading } = useUsers();
   
   // Local state
   const [joinRequestLoading, setJoinRequestLoading] = useState(false);
+  const [creatorProfile, setCreatorProfile] = useState<UserProfile | null | undefined>(creator);
   
   // Determine if the current user is the creator
   const isCreator = user?.uid === teeTime.creatorId;
@@ -91,6 +96,31 @@ export function TeeTimeCard({
     new Date(teeTime.dateTime),
     'h:mm a'
   ) : '';
+
+  // Track if we've attempted to fetch this creator profile
+  const creatorFetchAttemptedRef = useRef(false);
+  
+  // Fetch creator profile if not provided
+  useEffect(() => {
+    const fetchCreator = async () => {
+      // Only fetch if creator is undefined and we know the creatorId
+      // and we haven't already attempted to fetch it
+      if (creatorProfile === undefined && teeTime.creatorId && !creatorFetchAttemptedRef.current) {
+        // Mark as attempted so we don't try again
+        creatorFetchAttemptedRef.current = true;
+        
+        try {
+          const profile = await getUserById(teeTime.creatorId);
+          setCreatorProfile(profile);
+        } catch (error) {
+          console.error('Error fetching creator profile:', error);
+          setCreatorProfile(null); // Mark as failed
+        }
+      }
+    };
+    
+    fetchCreator();
+  }, [teeTime.creatorId, creatorProfile, getUserById]);
 
   const getStatusBadge = () => {
     switch(teeTime.status) {
@@ -143,6 +173,50 @@ export function TeeTimeCard({
     
   // Check if any join operation is in progress for this tee time
   const isJoining = joinRequestLoading || pendingOperations[`join_${teeTime.id}`];
+
+  // Render creator information with loading state
+  const renderCreator = () => {
+    if (creatorProfile) {
+      // We have the creator profile
+      return (
+        <>
+          <Avatar 
+            src={creatorProfile.photoURL} 
+            alt={creatorProfile.displayName || 'User'} 
+            size="sm" 
+            className="border-2 border-white dark:border-gray-900"
+          />
+          <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {creatorProfile.displayName || 'Anonymous User'}
+          </span>
+        </>
+      );
+    } else if (userLoading[teeTime.creatorId]) {
+      // Creator is currently loading
+      return (
+        <>
+          <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center">
+            <LoadingSpinner size="sm" className="text-gray-500 dark:text-gray-400" />
+          </div>
+          <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center">
+            Loading host...
+          </span>
+        </>
+      );
+    } else {
+      // Creator profile failed to load or is unknown
+      return (
+        <>
+          <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center">
+            <User className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+          </div>
+          <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            Unknown Host
+          </span>
+        </>
+      );
+    }
+  };
 
   return (
     <Card 
@@ -210,28 +284,7 @@ export function TeeTimeCard({
       <CardFooter className="border-t border-gray-100 dark:border-gray-800 px-6 py-4 bg-gray-50 dark:bg-gray-900/50">
         <div className="flex justify-between items-center w-full">
           <div className="flex items-center">
-            {creator ? (
-              <>
-                <Avatar 
-                  src={creator.photoURL} 
-                  alt={creator.displayName || 'User'} 
-                  size="sm" 
-                  className="border-2 border-white dark:border-gray-900"
-                />
-                <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {creator.displayName || 'Anonymous User'}
-                </span>
-              </>
-            ) : (
-              <>
-                <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center">
-                  <Users className="h-4 w-4 text-gray-500 dark:text-gray-400" />
-                </div>
-                <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Loading host...
-                </span>
-              </>
-            )}
+            {renderCreator()}
           </div>
           
           <div onClick={e => e.stopPropagation()}>

@@ -50,8 +50,8 @@ export {
   onPlayerUpdated,
   onPlayerRemoved,
   cleanupOldTeeTimes,
-  continueTeeTimeCleanup,
-  teeTimeFunctions
+  continueTeeTimeCleanup
+  // Remove teeTimeFunctions from here
 } from './tee-time.functions';
 
 // Log initialization

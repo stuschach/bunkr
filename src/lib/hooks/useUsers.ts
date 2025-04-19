@@ -16,6 +16,7 @@ import {
 import { db } from '@/lib/firebase/config';
 import { UserProfile } from '@/types/auth';
 import { cacheService, CACHE_KEYS, CACHE_TTL, CacheOperationPriority } from '@/lib/services/CacheService';
+import { debounce } from 'lodash';
 
 // Constants for cache management
 const USER_CACHE_PREFIX = 'user_';
@@ -46,6 +47,27 @@ export function useUsers() {
   const memoryCache = useRef<Record<string, { data: UserProfile; timestamp: number }>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<Error | null>(null);
+  
+  // Track pending loading state updates to batch them
+  const pendingLoadingUpdates = useRef<Record<string, boolean>>({});
+  
+  // Create a debounced function to apply loading state updates
+  const applyLoadingUpdates = useCallback(
+    debounce(() => {
+      const updates = pendingLoadingUpdates.current;
+      if (Object.keys(updates).length > 0) {
+        setLoading(prev => ({ ...prev, ...updates }));
+        pendingLoadingUpdates.current = {};
+      }
+    }, 50),
+    []
+  );
+  
+  // Update loading state through the debounced function
+  const updateLoadingState = useCallback((id: string, isLoading: boolean) => {
+    pendingLoadingUpdates.current[id] = isLoading;
+    applyLoadingUpdates();
+  }, [applyLoadingUpdates]);
   
   // Clean up expired memory cache entries
   useEffect(() => {
@@ -89,44 +111,49 @@ export function useUsers() {
   
   /**
    * Get a user by ID with efficient caching
+   * Now supports multiple IDs to be passed as separate arguments
    */
   const getUserById = useCallback(async (
-    userId: string,
-    options?: {
-      forceRefresh?: boolean;
-      priority?: CacheOperationPriority;
+    ...userIds: string[]
+  ): Promise<UserProfile | Record<string, UserProfile> | null> => {
+    // If no IDs were passed, return null
+    if (userIds.length === 0) return null;
+    
+    // If multiple IDs were passed, use getUsersByIds internally
+    if (userIds.length > 1) {
+      return getUsersByIds(userIds);
     }
-  ): Promise<UserProfile | null> => {
+    
+    // Single ID case
+    const userId = userIds[0];
     if (!userId) return null;
     
-    const priority = options?.priority || CacheOperationPriority.NORMAL;
+    const priority = CacheOperationPriority.NORMAL;
     const cacheKey = `${USER_CACHE_PREFIX}${userId}`;
     
-    // Set loading state
-    setLoading(prev => ({ ...prev, [userId]: true }));
+    // Set loading state using debounced approach
+    updateLoadingState(userId, true);
     
     try {
       // Check memory cache first (fastest)
       const memoryCachedUser = memoryCache.current[cacheKey];
-      if (memoryCachedUser && !options?.forceRefresh) {
-        setLoading(prev => ({ ...prev, [userId]: false }));
+      if (memoryCachedUser) {
+        updateLoadingState(userId, false);
         return memoryCachedUser.data;
       }
       
       // Then check persisted cache
       const selectedCacheService = chooseCacheService(priority);
-      if (!options?.forceRefresh) {
-        const cachedUser = await selectedCacheService.get<UserProfile>(cacheKey, priority);
-        if (cachedUser) {
-          // Update memory cache
-          memoryCache.current[cacheKey] = { 
-            data: cachedUser, 
-            timestamp: Date.now() 
-          };
-          
-          setLoading(prev => ({ ...prev, [userId]: false }));
-          return cachedUser;
-        }
+      const cachedUser = await selectedCacheService.get<UserProfile>(cacheKey, priority);
+      if (cachedUser) {
+        // Update memory cache
+        memoryCache.current[cacheKey] = { 
+          data: cachedUser, 
+          timestamp: Date.now() 
+        };
+        
+        updateLoadingState(userId, false);
+        return cachedUser;
       }
       
       // No cache hit, fetch from Firestore
@@ -134,7 +161,7 @@ export function useUsers() {
       const userSnap = await firestoreGetDoc(userRef);
       
       if (!userSnap.exists()) {
-        setLoading(prev => ({ ...prev, [userId]: false }));
+        updateLoadingState(userId, false);
         return null;
       }
       
@@ -161,9 +188,9 @@ export function useUsers() {
       setError(err instanceof Error ? err : new Error(`Failed to fetch user ${userId}`));
       return null;
     } finally {
-      setLoading(prev => ({ ...prev, [userId]: false }));
+      updateLoadingState(userId, false);
     }
-  }, [chooseCacheService, convertToUserProfile]);
+  }, [chooseCacheService, convertToUserProfile, updateLoadingState]);
   
   /**
    * Get multiple users by IDs efficiently (batch loading)
@@ -180,6 +207,11 @@ export function useUsers() {
     const priority = options?.priority || CacheOperationPriority.NORMAL;
     const uniqueIds = [...new Set(userIds)];
     const batchKey = `${BATCH_CACHE_PREFIX}${uniqueIds.sort().join('_')}`;
+    
+    // Set loading states for all IDs using the debounced approach
+    uniqueIds.forEach(id => {
+      updateLoadingState(id, true);
+    });
     
     try {
       // Try to get the whole batch from cache first
@@ -199,6 +231,11 @@ export function useUsers() {
             };
           });
           
+          // Clear loading states
+          uniqueIds.forEach(id => {
+            updateLoadingState(id, false);
+          });
+          
           return cachedBatch;
         }
       }
@@ -213,6 +250,8 @@ export function useUsers() {
         
         if (memoryCached && !options?.forceRefresh) {
           result[uid] = memoryCached.data;
+          // Clear loading state for this ID
+          updateLoadingState(uid, false);
         } else {
           idsToFetch.push(uid);
         }
@@ -239,6 +278,8 @@ export function useUsers() {
                 data: cachedUser,
                 timestamp: Date.now()
               };
+              // Clear loading state for this ID
+              updateLoadingState(uid, false);
               return;
             }
           }
@@ -282,7 +323,18 @@ export function useUsers() {
             { ttl: DEFAULT_CACHE_TTL },
             priority
           ).catch(err => console.error(`Error caching user ${doc.id}:`, err));
+          
+          // Clear loading state for this ID
+          updateLoadingState(doc.id, false);
         });
+        
+        // Set any remaining IDs as not loading (they weren't found)
+        const notFoundIds = batchIds.filter(id => !snapshot.docs.some(doc => doc.id === id));
+        if (notFoundIds.length > 0) {
+          notFoundIds.forEach(id => {
+            updateLoadingState(id, false);
+          });
+        }
       }
       
       // Cache the batch result
@@ -297,12 +349,18 @@ export function useUsers() {
     } catch (err) {
       console.error('Error fetching users batch:', err);
       setError(err instanceof Error ? err : new Error('Failed to fetch users batch'));
+      
+      // Clear all loading states on error
+      uniqueIds.forEach(id => {
+        updateLoadingState(id, false);
+      });
+      
       return {};
     }
-  }, [chooseCacheService, convertToUserProfile]);
+  }, [chooseCacheService, convertToUserProfile, updateLoadingState]);
   
   /**
-   * Search users by display name with improved error handling and fallback strategies
+   * Search users by display name with improved caching and reliability
    */
   const searchUsers = useCallback(async (
     searchQuery: string,
@@ -314,14 +372,14 @@ export function useUsers() {
   ): Promise<UserProfile[]> => {
     if (!searchQuery || searchQuery.length < 2) return [];
     
-    const maxResults = options?.maxResults || 10;
+    const maxResults = options?.maxResults || 20;
     const priority = options?.priority || CacheOperationPriority.LOW;
     const searchTerm = searchQuery.toLowerCase().trim();
     const cacheKey = `${SEARCH_CACHE_PREFIX}${searchTerm}_${maxResults}`;
     
     // Set global loading state for this search
     const searchStateKey = `search_${searchTerm}`;
-    setLoading(prev => ({ ...prev, [searchStateKey]: true }));
+    updateLoadingState(searchStateKey, true);
     
     try {
       // Check cache first
@@ -342,7 +400,7 @@ export function useUsers() {
             };
           });
           
-          setLoading(prev => ({ ...prev, [searchStateKey]: false }));
+          updateLoadingState(searchStateKey, false);
           return cachedResults;
         }
       }
@@ -364,14 +422,14 @@ export function useUsers() {
       setError(err instanceof Error ? err : new Error('Failed to search users'));
       return [];
     } finally {
-      setLoading(prev => ({ ...prev, [searchStateKey]: false }));
+      updateLoadingState(searchStateKey, false);
     }
-  }, [chooseCacheService, convertToUserProfile]);
+  }, [chooseCacheService, updateLoadingState]);
   
   /**
    * Multi-strategy user search with fallbacks
    */
-  const searchUsersWithFallbacks = async (searchTerm: string, maxResults: number): Promise<UserProfile[]> => {
+  const searchUsersWithFallbacks = useCallback(async (searchTerm: string, maxResults: number): Promise<UserProfile[]> => {
     const strategies = [
       // Strategy 1: Search by displayNameLowercase with range query (requires index)
       async () => {
@@ -493,7 +551,7 @@ export function useUsers() {
     
     // If all strategies fail, return empty array
     return [];
-  };
+  }, [convertToUserProfile]);
   
   /**
    * Clear user cache

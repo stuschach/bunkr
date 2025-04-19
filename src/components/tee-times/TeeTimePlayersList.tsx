@@ -1,7 +1,7 @@
 // src/components/tee-times/TeeTimePlayersList.tsx
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { format, formatDistance } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -57,7 +57,7 @@ export function TeeTimePlayersList({
   pendingInvitationsCount = 0
 }: TeeTimePlayersListProps) {
   // Use the useUsers hook for better search
-  const { searchUsers: searchUsersHook, loading: usersLoading } = useUsers();
+  const { searchUsers: searchUsersHook, loading: userLoading, getUserById } = useUsers();
   const { showToast } = useToast();
   
   // State
@@ -268,6 +268,34 @@ export function TeeTimePlayersList({
     return () => clearTimeout(delaySearch);
   }, [searchQuery, searchUsers]);
   
+  // Track which players we've attempted to load profiles for
+  const profileFetchAttemptsRef = useRef<Record<string, boolean>>({});
+  
+  // Fetch any missing profiles
+  useEffect(() => {
+    const fetchMissingProfiles = async () => {
+      // Get players without profiles, excluding those we've already tried to fetch
+      const playersWithoutProfiles = players.filter(p => 
+        !p.profile && !profileFetchAttemptsRef.current[p.userId]
+      );
+      
+      if (playersWithoutProfiles.length === 0) return;
+      
+      // Mark these players as attempted
+      playersWithoutProfiles.forEach(p => {
+        profileFetchAttemptsRef.current[p.userId] = true;
+      });
+      
+      // Use batch loading for all profiles at once
+      const userIds = playersWithoutProfiles.map(p => p.userId);
+      if (userIds.length > 0) {
+        await getUserById(...userIds);
+      }
+    };
+    
+    fetchMissingProfiles();
+  }, [players, getUserById]);
+  
   // Group players by status and type
   const confirmedPlayers = players.filter(p => p.status === 'confirmed');
   
@@ -334,7 +362,12 @@ export function TeeTimePlayersList({
                         <div className="ml-3">
                           <div className="flex items-center">
                             <div className="text-sm font-medium">
-                              {player.profile?.displayName || 'Anonymous Player'}
+                              {player.profile?.displayName || (userLoading[player.userId] ? (
+                                <span className="flex items-center">
+                                  <LoadingSpinner size="xs" className="mr-1" />
+                                  Loading...
+                                </span>
+                              ) : 'Unknown Player')}
                             </div>
                             {player.userId === teeTime.creatorId && (
                               <Badge variant="outline" className="ml-2 text-xs">Host</Badge>
@@ -398,7 +431,12 @@ export function TeeTimePlayersList({
                         />
                         <div className="ml-3">
                           <div className="text-sm font-medium">
-                            {player.profile?.displayName || 'Anonymous Player'}
+                            {player.profile?.displayName || (userLoading[player.userId] ? (
+                              <span className="flex items-center">
+                                <LoadingSpinner size="xs" className="mr-1" />
+                                Loading...
+                              </span>
+                            ) : 'Unknown Player')}
                           </div>
                           <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
                             <Clock className="w-3 h-3 mr-1 inline" />
@@ -473,7 +511,12 @@ export function TeeTimePlayersList({
                         <div className="ml-3">
                           <div className="flex items-center">
                             <div className="text-sm font-medium">
-                              {player.profile?.displayName || 'Anonymous Player'}
+                              {player.profile?.displayName || (userLoading[player.userId] ? (
+                                <span className="flex items-center">
+                                  <LoadingSpinner size="xs" className="mr-1" />
+                                  Loading...
+                                </span>
+                              ) : 'Unknown Player')}
                             </div>
                             <Badge className="ml-2 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
                               Invited
@@ -533,7 +576,12 @@ export function TeeTimePlayersList({
                         />
                         <div className="ml-3">
                           <div className="text-sm font-medium">
-                            {player.profile?.displayName || 'Anonymous Player'}
+                            {player.profile?.displayName || (userLoading[player.userId] ? (
+                              <span className="flex items-center">
+                                <LoadingSpinner size="xs" className="mr-1" />
+                                Loading...
+                              </span>
+                            ) : 'Unknown Player')}
                           </div>
                           <div className="text-xs text-gray-500 dark:text-gray-400">
                             {player.status === 'declined' ? 'Declined' : 'Removed'}
@@ -616,6 +664,22 @@ export function TeeTimePlayersList({
                     Home Course: {creatorProfile.homeCourse}
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Display loading state when host info is loading */}
+        {teeTime.creatorId && !creatorProfile && userLoading[teeTime.creatorId] && (
+          <div className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4">
+            <div className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Host Information</div>
+            <div className="flex items-center">
+              <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center">
+                <User className="w-5 h-5 text-gray-400" />
+              </div>
+              <div className="ml-3 flex items-center">
+                <LoadingSpinner size="sm" className="mr-2" />
+                <span className="text-gray-500">Loading host information...</span>
               </div>
             </div>
           </div>

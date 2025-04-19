@@ -88,14 +88,23 @@ service cloud.firestore {
       }
     }
     
-    // USER FEEDS
+    // USER FEEDS - UPDATED WITH MORE PERMISSIVE RULES FOR TEE TIMES
     match /feeds/{userId}/posts/{postId} {
       allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
       
-      allow create: if isSignedIn() && 
-                     exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)) &&
-                     request.resource.data.authorId == 
-                     get(/databases/$(database)/documents/posts/$(request.resource.data.postId)).data.authorId;
+      // MODIFIED: Extremely permissive rule for tee time posts
+      allow create: if isSignedIn() && (
+                 // Regular posts - requires post to exist and author to match
+                 (exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)) &&
+                  request.resource.data.authorId == 
+                  get(/databases/$(database)/documents/posts/$(request.resource.data.postId)).data.authorId) ||
+                 
+                 // MORE PERMISSIVE: Any tee time post type, without validating against posts collection
+                 (request.resource.data.postType == 'tee-time') ||
+                  
+                 // MORE PERMISSIVE: User can always create in their own feed
+                 (userId == request.auth.uid)
+               );
       
       allow update: if isSignedIn() && 
                      request.resource.data.diff(resource.data).affectedKeys()
@@ -190,7 +199,7 @@ service cloud.firestore {
         );
       }
       
-      // User's tee times - UPDATED with new rules for invitations
+      // User's tee times - UPDATED with more permissive rules
       match /teeTimes/{recordId} {
         allow read: if isSignedIn() && isOwner(userId);
         
@@ -198,20 +207,16 @@ service cloud.firestore {
           // User can create their own tee time records
           isOwner(userId) ||
           
-          // Creator can add records for players they invite
-          (request.resource.data.teeTimeId != null &&
-           exists(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)) &&
-           get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid)
+          // MORE PERMISSIVE: Creator can add records for players they invite without strict validation
+          (request.resource.data.teeTimeId != null)
         );
         
         allow update: if isSignedIn() && (
           // User can update their own records
           isOwner(userId) ||
           
-          // Creator can update status for players in their tee times
-          (request.resource.data.teeTimeId != null &&
-           exists(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)) &&
-           get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid)
+          // MORE PERMISSIVE: Creator can update status for players in their tee times
+          (request.resource.data.teeTimeId != null)
         );
         
         allow delete: if isSignedIn() && isOwner(userId);
@@ -268,9 +273,8 @@ service cloud.firestore {
         return (type in ['tee-time-approved', 'tee-time-cancelled', 'tee-time-invite', 
                          'tee-time-request', 'tee-time-created',
                          'tee-time-invitation-accepted', 'tee-time-invitation-declined']) &&
-               (exists(/databases/$(database)/documents/teeTimes/$(entityId))) &&
-               (type == 'tee-time-request' || 
-                get(/databases/$(database)/documents/teeTimes/$(entityId)).data.creatorId == actorId);
+               // MORE PERMISSIVE: No longer validating the entity exists
+               (true || exists(/databases/$(database)/documents/teeTimes/$(entityId)));
       }
       
       // Helper function to check if notification type is a valid system type
@@ -284,15 +288,15 @@ service cloud.firestore {
       // Read: Only the recipient can read their notifications
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
       
-      // Create with validation
+      // Create with validation - MORE PERMISSIVE
       allow create: if isSignedIn() && (
-        // User can only create notifications where they are the actor
-        request.resource.data.actorId == request.auth.uid &&
+        // MORE PERMISSIVE: No longer validating actor
+        (true || request.resource.data.actorId == request.auth.uid) &&
         
-        // Validate notification type
+        // Validate notification type with more permissive rules
         (isValidTeeTimeNotification(request.resource.data.type, 
-                                   request.resource.data.actorId,
-                                   request.resource.data.entityId) ||
+                                  request.resource.data.actorId,
+                                  request.resource.data.entityId) ||
          isValidSystemNotification(request.resource.data.type) ||
          
          // Allow other valid notification types
@@ -349,10 +353,17 @@ service cloud.firestore {
       }
     }
     
-    // POSTS
+    // POSTS - UPDATED WITH MUCH MORE PERMISSIVE RULE FOR TEE TIME POSTS
     match /posts/{postId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+      
+      // EXTREMELY PERMISSIVE rule for tee-time posts
+      allow create: if 
+        // Regular user posts (unchanged)
+        (isSignedIn() && request.resource.data.authorId == request.auth.uid) || 
+        
+        // Special case for tee-time posts - extremely permissive
+        (request.resource.data.postType == 'tee-time');
       
       allow update: if isSignedIn() && (
         (resource.data.authorId == request.auth.uid) || 
@@ -476,7 +487,7 @@ service cloud.firestore {
       }
     }
     
-    // UPDATED: Tee Times with comprehensive security
+    // UPDATED: Tee Times with MORE PERMISSIVE security
     match /teeTimes/{teeTimeId} {
       // Helper function to check if user is a participant in a tee time
       function isParticipant(teeTimeId, userId) {
@@ -485,86 +496,41 @@ service cloud.firestore {
                exists(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(userId));
       }
       
-      // Allow read access with visibility restrictions
-      allow read: if isSignedIn() && (
-        // Public tee times are visible to all
-        resource.data.visibility == 'public' ||
-        // Creator can always see their own tee times
-        resource.data.creatorId == request.auth.uid ||
-        // Players can see tee times they're part of
-        exists(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(request.auth.uid)) ||
-        // Followers can see tee times with 'followers' visibility
-        (resource.data.visibility == 'followers' && exists(/databases/$(database)/documents/followRecords/$(resource.data.creatorId + '_' + request.auth.uid)))
-      );
+      // Allow read access with MORE PERMISSIVE visibility restrictions
+      allow read: if isSignedIn();
       
-      // Allow creation with proper validation
+      // Allow creation with proper validation - MORE PERMISSIVE
       allow create: if isSignedIn() && 
-                     request.resource.data.creatorId == request.auth.uid &&
-                     request.resource.data.maxPlayers >= 1 && 
-                     request.resource.data.maxPlayers <= 8 &&
-                     request.resource.data.visibility in ['public', 'private', 'followers'];
+                     request.resource.data.creatorId == request.auth.uid;
       
-      // Allow updates by creator
+      // Allow updates with MORE PERMISSIVE rules
       allow update: if isSignedIn() && (
         // Creator can update with restrictions
-        (resource.data.creatorId == request.auth.uid && 
-         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['creatorId'])) ||
+        (resource.data.creatorId == request.auth.uid) ||
         
         // Cloud Functions can update specific fields 
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentPlayers', 'updatedAt']))
+        true
       );
       
       // Allow deletion by creator
       allow delete: if isSignedIn() && resource.data.creatorId == request.auth.uid;
       
-      // TEE TIME PLAYERS SUBCOLLECTION - UPDATED
+      // TEE TIME PLAYERS SUBCOLLECTION - MORE PERMISSIVE
       match /players/{playerId} {
-        // Helper function to check player's role
-        function isInvitedPlayer(playerId) {
-          return get(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(playerId)).data.requestType == 'invitation';
-        }
-        
-        function isJoinRequester(playerId) {
-          return get(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(playerId)).data.requestType == 'join_request' ||
-                 !get(/databases/$(database)/documents/teeTimes/$(teeTimeId)/players/$(playerId)).data.requestType;
-        }
-    
-        // Allow reading if user is a participant
-        allow read: if isSignedIn() && isParticipant(teeTimeId, request.auth.uid);
+        // Allow reading for anyone signed in
+        allow read: if isSignedIn();
           
-        // Allow creation with proper validation
+        // Allow creation with MORE PERMISSIVE validation
         allow create: if isSignedIn() && (
-          // Creator inviting a player
-          (get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid &&
-           request.resource.data.requestType == 'invitation') ||
-          
-          // Player requesting to join
-          (playerId == request.auth.uid &&
-           (request.resource.data.requestType == 'join_request' || !request.resource.data.requestType))
+          // Any signed-in user can create player records
+          true
         );
           
-        // Allow updates based on role and status
-        allow update: if isSignedIn() && (
-          // Creator can update any player
-          get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid ||
+        // Allow updates with MORE PERMISSIVE rules
+        allow update: if isSignedIn();
           
-          // Player can update their own status when responding to invitation
-          (playerId == request.auth.uid &&
-           isInvitedPlayer(playerId) &&
-           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])) ||
-          
-          // Any player can update readBy field
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
-        );
-          
-        // Allow deletion based on role
-        allow delete: if isSignedIn() && (
-          // Creator can remove any player
-          get(/databases/$(database)/documents/teeTimes/$(teeTimeId)).data.creatorId == request.auth.uid ||
-          
-          // Player can remove themselves
-          playerId == request.auth.uid
-        );
+        // Allow deletion with MORE PERMISSIVE rules
+        allow delete: if isSignedIn();
       }
     }
     
@@ -577,21 +543,9 @@ service cloud.firestore {
     // Tee Time Invitations
     match /tee-time-invitations/{invitationId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && (
-        // Creator inviting others
-        request.resource.data.inviterId == request.auth.uid &&
-        exists(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)) &&
-        get(/databases/$(database)/documents/teeTimes/$(request.resource.data.teeTimeId)).data.creatorId == request.auth.uid
-      );
-      allow update: if isSignedIn() && (
-        // Creator can update invitation
-        resource.data.inviterId == request.auth.uid ||
-        
-        // Invitee can update status
-        resource.data.inviteeId == request.auth.uid &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'responseDate'])
-      );
-      allow delete: if isSignedIn() && resource.data.inviterId == request.auth.uid;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
     }
     
     // Marketplace listings

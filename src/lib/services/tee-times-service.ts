@@ -48,6 +48,7 @@ const TEE_TIME_PLAYERS_COLLECTION = 'players';
 const USERS_COLLECTION = 'users';
 const USER_TEE_TIMES_COLLECTION = 'teeTimes';
 const POSTS_COLLECTION = 'posts';
+const FEEDS_COLLECTION = 'feeds';
 const MAX_BATCH_SIZE = 500;
 const FIRESTORE_QUERY_LIMIT = 10; // Firestore "in" query limit
 
@@ -175,11 +176,54 @@ export const createTeeTime = async (
         requestType: 'creator'
       });
       
+      // ADDED: Create post directly (backup mechanism)
+      const postRef = doc(collection(db, POSTS_COLLECTION));
+      
+      const postContent = `I'm hosting a tee time at ${teeTimeData.courseName} on ${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. Looking for ${teeTimeData.maxPlayers - 1} more players!`;
+      
+      const postData = {
+        authorId: userId,
+        content: postContent,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        postType: 'tee-time',
+        teeTimeId: teeTimeRef.id,
+        courseName: teeTimeData.courseName,
+        courseId: teeTimeData.courseId || null,
+        dateTime: Timestamp.fromDate(dateTime),
+        maxPlayers: teeTimeData.maxPlayers,
+        visibility: teeTimeData.visibility,
+        likes: 0,
+        comments: 0,
+        likedBy: []
+      };
+      
+      batch.set(postRef, postData);
+      
+      // ADDED: Create feed entry directly (backup mechanism)
+      const feedRef = doc(collection(db, FEEDS_COLLECTION, userId, 'posts'), postRef.id);
+      
+      const feedData = {
+        postId: postRef.id,
+        authorId: userId,
+        createdAt: serverTimestamp(),
+        postType: 'tee-time',
+        teeTimeId: teeTimeRef.id,
+        courseName: teeTimeData.courseName,
+        dateTime: Timestamp.fromDate(dateTime),
+        maxPlayers: teeTimeData.maxPlayers,
+        visibility: teeTimeData.visibility
+      };
+      
+      batch.set(feedRef, feedData);
+      
       // Execute all operations
       await batch.commit();
       
       // Clear cache entries that might include this tee time
       await cacheService.removeByPrefix('teeTimes', CacheOperationPriority.HIGH);
+      
+      logger.info(`Successfully created tee time ${teeTimeRef.id} with post ${postRef.id} and feed entry`);
       
       return teeTimeRef.id;
     }, {
@@ -550,7 +594,7 @@ export const getUserTeeTimes = async (
       
       // Extract tee time IDs
       const teeTimeIds = userTeeTimesSnapshot.docs
-        .map(doc => (doc.data() || {}).teeTimeId)
+        .map(doc => (doc.data() || {}).teeTimeId as string)
         .filter(Boolean);
       
       if (teeTimeIds.length === 0) {
@@ -800,12 +844,18 @@ export const deleteTeeTime = async (
         collection(db, TEE_TIMES_COLLECTION, teeTimeId, TEE_TIME_PLAYERS_COLLECTION)
       );
       
-      const confirmedPlayers = playersSnapshot.docs
+      const confirmedPlayers: TeeTimePlayer[] = playersSnapshot.docs
         .filter(doc => doc.data()?.status === 'confirmed' && doc.id !== userId)
-        .map(doc => ({
-          userId: doc.id,
-          ...doc.data()
-        }));
+        .map(doc => {
+          const data = doc.data() || {};
+          return {
+            userId: doc.id,
+            status: data.status || 'confirmed',
+            joinedAt: data.joinedAt?.toDate() || new Date(),
+            invitedBy: data.invitedBy || undefined,
+            requestType: data.requestType || undefined
+          };
+        });
       
       // Delete all player documents
       const batch = writeBatch(db);
@@ -1405,6 +1455,79 @@ export const respondToInvitation = async (
 /**
  * Search users by name with improved caching and reliability
  */
+/**
+ * Set up a real-time listener for a user's tee times
+ */
+export const subscribeTeeTimesByUser = (
+  userId: string,
+  callback: (teeTimes: TeeTime[]) => void
+): (() => void) => {
+  // Create reference to user's tee times collection
+  const userTeeTimesRef = collection(db, USERS_COLLECTION, userId, USER_TEE_TIMES_COLLECTION);
+  
+  // Set up the query
+  const userTeeTimesQuery = query(
+    userTeeTimesRef,
+    orderBy('createdAt', 'desc')
+  );
+  
+  // Set up the listener
+  const unsubscribe = onSnapshot(
+    userTeeTimesQuery,
+    async (snapshot) => {
+      try {
+        // Extract tee time IDs
+        const teeTimeIds = snapshot.docs
+          .map(doc => (doc.data() || {}).teeTimeId as string)
+          .filter(Boolean);
+        
+        if (teeTimeIds.length === 0) {
+          callback([]);
+          return;
+        }
+        
+        // Process IDs in chunks due to Firestore "in" query limitation
+        const teeTimesChunks: TeeTime[] = [];
+        
+        // Use efficient chunks to fetch data
+        for (let i = 0; i < teeTimeIds.length; i += FIRESTORE_QUERY_LIMIT) {
+          const chunk = teeTimeIds.slice(i, i + FIRESTORE_QUERY_LIMIT);
+          
+          // Build query for this chunk
+          let teeTimesQuery = query(
+            collection(db, TEE_TIMES_COLLECTION),
+            where('__name__', 'in', chunk)
+          );
+          
+          const teeTimesSnapshot = await getDocs(teeTimesQuery);
+          
+          // Convert to TeeTime objects
+          const timeTimesChunk = teeTimesSnapshot.docs.map(convertToTeeTime);
+          teeTimesChunks.push(...timeTimesChunk);
+        }
+        
+        // Sort by date (ascending)
+        teeTimesChunks.sort((a, b) => {
+          if (!a.dateTime || !b.dateTime) return 0;
+          return a.dateTime.getTime() - b.dateTime.getTime();
+        });
+        
+        // Return the result
+        callback(teeTimesChunks);
+      } catch (error) {
+        logger.error(`Error in tee times by user listener for ${userId}:`, error);
+        callback([]);
+      }
+    },
+    (error) => {
+      logger.error(`Error in tee times by user listener for ${userId}:`, error);
+      callback([]);
+    }
+  );
+  
+  return unsubscribe;
+};
+
 export const searchUsersByName = async (
   queryString: string,
   options: { maxResults?: number; cacheOnly?: boolean } = {}

@@ -19,7 +19,7 @@ import {
   createTeeTime as createTeeTimeService,
   updateTeeTime,
   cancelTeeTime,
-  deleteTeeTime, // Import the new deleteTeeTime function
+  deleteTeeTime,
   requestToJoinTeeTime,
   approvePlayerRequest,
   removePlayerFromTeeTime,
@@ -27,6 +27,7 @@ import {
   searchUsersByName,
   subscribeTeeTime,
   subscribeTeeTimePlayers,
+  subscribeTeeTimesByUser,
   respondToInvitation as respondToInvitationService,
   TeeTimeError,
   TeeTimeNotFoundError,
@@ -35,8 +36,9 @@ import {
 } from '@/lib/services/tee-times-service';
 import { useNotificationCreator } from '@/lib/hooks/useNotificationCreator';
 import { useToast } from '@/lib/hooks/useToast';
-import { useUsers } from '@/lib/hooks/useUsers'; // Import the useUsers hook
+import { useUsers } from '@/lib/hooks/useUsers'; // FIXED: Import useUsers hook
 import { DocumentSnapshot } from 'firebase/firestore';
+import { cacheService, CacheOperationPriority } from '@/lib/services/CacheService';
 
 // Define the context interface
 interface TeeTimeContextValue {
@@ -48,10 +50,11 @@ interface TeeTimeContextValue {
   createTeeTime: (data: TeeTimeFormData) => Promise<string | null>;
   updateTeeTime: (teeTimeId: string, data: Partial<TeeTimeFormData>) => Promise<boolean>;
   cancelTeeTime: (teeTimeId: string) => Promise<boolean>;
-  deleteTeeTime: (teeTimeId: string) => Promise<boolean>; // New function for tee time deletion
+  deleteTeeTime: (teeTimeId: string) => Promise<boolean>;
   getTeeTimeDetails: (teeTimeId: string) => Promise<{ teeTime: TeeTime | null; players: (TeeTimePlayer & { profile?: UserProfile })[] }>;
   subscribeTeeTime: (teeTimeId: string, callback: (teeTime: TeeTime | null) => void) => () => void;
   subscribeTeeTimePlayers: (teeTimeId: string, callback: (players: TeeTimePlayer[]) => void) => () => void;
+  subscribeTeeTimesByUser: (userId: string, callback: (teeTimes: TeeTime[]) => void) => () => void;
   
   // Player operations
   joinTeeTime: (teeTimeId: string) => Promise<boolean>;
@@ -62,11 +65,15 @@ interface TeeTimeContextValue {
   
   // Listing operations
   getPublicTeeTimesList: (filters?: TeeTimeFilters, lastVisible?: DocumentSnapshot, pageSize?: number) => Promise<{ teeTimes: TeeTime[]; lastVisible: DocumentSnapshot | null }>;
-  getUserTeeTimes: (status?: string, lastVisible?: DocumentSnapshot, pageSize?: number) => Promise<{ teeTimes: TeeTime[]; lastVisible: DocumentSnapshot | null }>;
+  getUserTeeTimes: (options?: { status?: string; lastVisible?: DocumentSnapshot; pageSize?: number; }) => Promise<{ teeTimes: TeeTime[]; lastVisible: DocumentSnapshot | null }>;
   
   // User operations
   getUserProfile: (userId: string) => Promise<UserProfile | null>;
   searchUsers: (query: string) => Promise<UserProfile[]>;
+  
+  // FIXED: Add getUserById and getUsersByIds to the context interface
+  getUserById: (userId: string) => Promise<UserProfile | null>;
+  getUsersByIds: (userIds: string[]) => Promise<Record<string, UserProfile>>;
   
   // Metadata
   pendingOperations: Record<string, boolean>;
@@ -86,7 +93,13 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
   const { user } = useAuth();
   const { showToast } = useToast();
   const notificationCreator = useNotificationCreator();
-  const { getUserById, getUsersByIds, searchUsers: searchUsersHook } = useUsers(); // Use the hook
+  
+  // FIXED: Use the useUsers hook to access user-related functions
+  const { 
+    getUserById, 
+    getUsersByIds, 
+    searchUsers: searchUsersHook 
+  } = useUsers();
   
   // State
   const [isLoading, setIsLoading] = useState(false);
@@ -104,12 +117,16 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     }));
   }, []);
   
-  // Get a user by ID (now uses the useUsers hook)
+  // Get a user by ID (now directly uses the useUsers hook)
   const getUserProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
     if (!userId) return null;
     
     try {
-      // Use the hook's getUserById method
+      // FIXED: Use getUserById from useUsers hook
+      if (!getUserById) {
+        throw new Error("User fetching functionality not available");
+      }
+      
       return await getUserById(userId);
     } catch (error) {
       console.error('Error fetching user profile:', error);
@@ -117,7 +134,7 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     }
   }, [getUserById]);
   
-  // Get player profiles for a tee time (now uses the useUsers hook)
+  // Get player profiles for a tee time (now directly uses the useUsers hook)
   const getPlayerProfiles = useCallback(async (
     players: TeeTimePlayer[]
   ): Promise<(TeeTimePlayer & { profile?: UserProfile })[]> => {
@@ -126,6 +143,25 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     try {
       // Get all user IDs
       const userIds = players.map(player => player.userId);
+      
+      // FIXED: Check if getUsersByIds exists
+      if (!getUsersByIds) {
+        // Fallback to individual fetches
+        const profiles: Record<string, UserProfile | null> = {};
+        
+        if (getUserById) {
+          // Sequential fetching as fallback
+          for (const id of userIds) {
+            profiles[id] = await getUserById(id);
+          }
+        }
+        
+        // Combine players with profiles
+        return players.map(player => ({
+          ...player,
+          profile: profiles[player.userId] || undefined
+        }));
+      }
       
       // Use batch loading
       const profiles = await getUsersByIds(userIds);
@@ -139,7 +175,7 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
       console.error('Error fetching player profiles:', error);
       return players;
     }
-  }, [getUsersByIds]);
+  }, [getUserById, getUsersByIds]);
   
   // Create a new tee time
   const handleCreateTeeTime = useCallback(async (teeTimeData: TeeTimeFormData): Promise<string | null> => {
@@ -160,6 +196,10 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
       if (!teeTimeId) {
         throw new Error('Failed to create tee time');
       }
+      
+      // Improved cache invalidation
+      await cacheService.removeByPrefix('teeTimes', CacheOperationPriority.HIGH);
+      await cacheService.invalidateUserTeeTimeCache(user.uid);
       
       showToast({
         title: 'Tee time created',
@@ -212,11 +252,13 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     }
   }, [resetError, getPlayerProfiles]);
   
-  // UPDATED: Get tee times for the current user with proper pagination
+  // Get tee times for the current user with proper pagination
   const getUserTeeTimesList = useCallback(async (
-    status?: string,
-    lastVisible?: DocumentSnapshot,
-    pageSize: number = 20
+    options?: {
+      status?: string;
+      lastVisible?: DocumentSnapshot;
+      pageSize?: number;
+    }
   ): Promise<{ teeTimes: TeeTime[]; lastVisible: DocumentSnapshot | null }> => {
     if (!user) {
       setError(new Error('You must be logged in to view your tee times'));
@@ -230,9 +272,9 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
       // Get paginated tee times
       const result = await getUserTeeTimes(
         user.uid,
-        status as TeeTimeStatus,
-        lastVisible,
-        pageSize
+        options?.status as TeeTimeStatus | undefined,
+        options?.lastVisible,
+        options?.pageSize || 20
       );
       
       return result;
@@ -351,7 +393,7 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     }
   }, [user, resetError, trackOperation, showToast]);
 
-  // NEW: Delete a tee time completely
+  // Delete a tee time completely
   const handleDeleteTeeTime = useCallback(async (teeTimeId: string): Promise<boolean> => {
     if (!user) {
       setError(new Error('You must be logged in to delete a tee time'));
@@ -635,7 +677,7 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     }
   }, [user, resetError, trackOperation, notificationCreator, showToast]);
   
-  // Handle responding to an invitation - FIXED to properly centralize notification logic
+  // Handle responding to an invitation
   const handleRespondToInvitation = useCallback(async (
     teeTimeId: string,
     playerId: string,
@@ -703,10 +745,15 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     }
   }, [user, resetError, trackOperation, notificationCreator, showToast]);
   
-  // Search users by name - Use the hook's searchUsers method
+  // Search users by name
   const handleSearchUsers = useCallback(async (query: string): Promise<UserProfile[]> => {
     try {
-      return await searchUsersHook(query, { maxResults: 20 });
+      // FIXED: Use searchUsersHook if available, fall back to searchUsersByName
+      if (searchUsersHook) {
+        return await searchUsersHook(query, { maxResults: 20 });
+      } else {
+        return await searchUsersByName(query, { maxResults: 20 });
+      }
     } catch (error) {
       console.error('Error searching users:', error);
       return [];
@@ -728,6 +775,20 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     return subscribeTeeTimePlayers(teeTimeId, callback);
   }, []);
   
+  // NEW: Handle subscribing to a user's tee times with real-time updates
+  const handleSubscribeTeeTimesByUser = useCallback((
+    userId: string,
+    callback: (teeTimes: TeeTime[]) => void
+  ): (() => void) => {
+    if (!userId) {
+      console.warn('Cannot subscribe to tee times: userId is required');
+      callback([]);
+      return () => {}; // Return empty unsubscribe function
+    }
+    
+    return subscribeTeeTimesByUser(userId, callback);
+  }, []);
+  
   // Create the context value object
   const contextValue = useMemo(() => ({
     // State
@@ -740,10 +801,11 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     createTeeTime: handleCreateTeeTime,
     updateTeeTime: handleUpdateTeeTime,
     cancelTeeTime: handleCancelTeeTime,
-    deleteTeeTime: handleDeleteTeeTime, // Add the new delete function
+    deleteTeeTime: handleDeleteTeeTime,
     getTeeTimeDetails,
     subscribeTeeTime: handleSubscribeTeeTime,
     subscribeTeeTimePlayers: handleSubscribeTeeTimePlayers,
+    subscribeTeeTimesByUser: handleSubscribeTeeTimesByUser,
     
     // Player operations
     joinTeeTime: handleJoinRequest,
@@ -758,7 +820,11 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     
     // User operations
     getUserProfile,
-    searchUsers: handleSearchUsers
+    searchUsers: handleSearchUsers,
+    
+    // FIXED: Directly expose getUserById and getUsersByIds
+    getUserById,
+    getUsersByIds
   }), [
     isLoading,
     error,
@@ -767,10 +833,11 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     handleCreateTeeTime,
     handleUpdateTeeTime,
     handleCancelTeeTime,
-    handleDeleteTeeTime, // Add the new function to dependencies
+    handleDeleteTeeTime,
     getTeeTimeDetails,
     handleSubscribeTeeTime,
     handleSubscribeTeeTimePlayers,
+    handleSubscribeTeeTimesByUser,
     handleJoinRequest,
     handleApprovePlayer,
     handleRemovePlayer,
@@ -779,7 +846,10 @@ export function TeeTimeProvider({ children }: TeeTimeProviderProps) {
     getPublicTeeTimesList,
     getUserTeeTimesList,
     getUserProfile,
-    handleSearchUsers
+    handleSearchUsers,
+    // FIXED: Add getUserById and getUsersByIds to dependencies
+    getUserById,
+    getUsersByIds
   ]);
   
   return (

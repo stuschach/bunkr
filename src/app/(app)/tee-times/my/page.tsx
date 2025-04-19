@@ -1,7 +1,7 @@
 // src/app/(app)/tee-times/my/page.tsx
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { format, isPast, formatDistance } from 'date-fns';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -35,10 +35,10 @@ export default function MyTeeTimes() {
   const { 
     isLoading, 
     error, 
-    getUserTeeTimes, 
     getUserProfile,
-    getUsersByIds, // Import the batch loading function
-    respondToInvitation 
+    getUsersByIds,
+    respondToInvitation,
+    subscribeTeeTimesByUser // NEW: Import the subscription function
   } = useTeeTime();
   
   // State
@@ -47,81 +47,85 @@ export default function MyTeeTimes() {
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past' | 'hosting'>('upcoming');
   const [initialLoading, setInitialLoading] = useState(true);
   const [respondingInvitations, setRespondingInvitations] = useState<Record<string, boolean>>({});
-  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
-  const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   
-  // Load tee times with optimized profile fetching
-  const fetchTeeTimes = useCallback(async (reset: boolean = false) => {
+  // Reference to store the unsubscribe function
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+  
+  // Set up real-time subscription to user's tee times
+  useEffect(() => {
     if (!user) return;
     
-    try {
-      setInitialLoading(reset);
-      if (reset) setLoadingMore(false);
-      else setLoadingMore(true);
-      
-      // Reset pagination if needed
-      const currentLastVisible = reset ? null : lastVisible;
-      
-      // Get paginated tee times - FIXED to handle pagination properly
-      const { teeTimes: teeTimesList, lastVisible: newLastVisible } = 
-        await getUserTeeTimes({
-          lastVisible: currentLastVisible,
-          pageSize: 10
-        });
-      
-      // Update state based on whether we're resetting or loading more
-      if (reset) {
-        setTeeTimes(teeTimesList);
-      } else {
-        setTeeTimes(prev => [...prev, ...teeTimesList]);
-      }
-      
-      // Update pagination state
-      setLastVisible(newLastVisible);
-      setHasMore(!!newLastVisible && teeTimesList.length > 0);
-      
-      // Fetch creator profiles for all tee times in batch
-      const creatorIds = teeTimesList
-        .map(teeTime => teeTime.creatorId)
-        .filter((id): id is string => id !== undefined && id !== user.uid);
-      
-      if (creatorIds.length > 0) {
-        const uniqueCreatorIds = [...new Set(creatorIds)];
-        
-        // OPTIMIZED: Use batch loading instead of individual requests
-        const profiles = await getUsersByIds(uniqueCreatorIds);
-        
-        // Convert returned map to the expected format
-        const formattedProfiles: Record<string, UserProfile> = {};
-        Object.entries(profiles).forEach(([id, profile]) => {
-          if (profile) {
-            formattedProfiles[id] = profile;
-          }
-        });
-        
-        setCreatorProfiles(prev => ({ ...prev, ...formattedProfiles }));
-      }
-    } catch (error) {
-      console.error('Error fetching tee times:', error);
-    } finally {
+    setInitialLoading(true);
+    
+    // Subscribe to real-time updates
+    const unsubscribe = subscribeTeeTimesByUser((newTeeTimes) => {
+      setTeeTimes(newTeeTimes);
       setInitialLoading(false);
+      
+      // Batch load creator profiles when tee times change
+      updateCreatorProfiles(newTeeTimes);
+    });
+    
+    // Store the unsubscribe function for cleanup
+    unsubscribeRef.current = unsubscribe;
+    
+    // Clean up subscription when the component unmounts
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+    };
+  }, [user, subscribeTeeTimesByUser]);
+  
+  // Helper function to update creator profiles in batch
+  const updateCreatorProfiles = useCallback(async (teeTimesList: TeeTime[]) => {
+    if (!teeTimesList.length || !user) return;
+    
+    // Extract creator IDs that aren't the current user
+    const creatorIds = teeTimesList
+      .map(teeTime => teeTime.creatorId)
+      .filter((id): id is string => 
+        id !== undefined && 
+        id !== user.uid && 
+        !creatorProfiles[id] // Only fetch profiles we don't already have
+      );
+    
+    if (creatorIds.length === 0) return;
+    
+    // Get unique creator IDs
+    const uniqueCreatorIds = [...new Set(creatorIds)];
+    
+    try {
+      // Fetch profiles in batch
+      const profiles = await getUsersByIds(uniqueCreatorIds);
+      
+      // Add the profiles to state
+      setCreatorProfiles(prev => ({
+        ...prev,
+        ...profiles
+      }));
+    } catch (error) {
+      console.error('Error fetching creator profiles:', error);
+    }
+  }, [user, getUsersByIds, creatorProfiles]);
+  
+  // Handle load more (fallback for pagination if needed)
+  const handleLoadMore = useCallback(async () => {
+    // Note: With real-time subscription, pagination is usually handled automatically
+    // This is kept for reference or future enhancements
+    setLoadingMore(true);
+    
+    try {
+      // Additional loading logic could go here if needed
+      
+      setLoadingMore(false);
+    } catch (error) {
+      console.error('Error loading more tee times:', error);
       setLoadingMore(false);
     }
-  }, [user, getUserTeeTimes, getUsersByIds, lastVisible]);
-  
-  // Load initial data
-  useEffect(() => {
-    if (user) {
-      fetchTeeTimes(true);
-    }
-  }, [user, fetchTeeTimes]);
-  
-  // Handle load more
-  const handleLoadMore = async () => {
-    if (loadingMore || !hasMore) return;
-    await fetchTeeTimes(false);
-  };
+  }, []);
   
   // Filter tee times based on active tab
   const filteredTeeTimes = teeTimes.filter(teeTime => {
@@ -159,25 +163,7 @@ export default function MyTeeTimes() {
     try {
       await respondToInvitation(teeTimeId, user.uid, 'accept');
       
-      // Optimistically update the UI
-      setTeeTimes(prev => prev.map(teeTime => {
-        if (teeTime.id === teeTimeId) {
-          // Update the player status
-          const updatedPlayers = teeTime.players?.map(player => {
-            if (player.userId === user.uid) {
-              return { ...player, status: 'confirmed' };
-            }
-            return player;
-          }) || [];
-          
-          return {
-            ...teeTime,
-            players: updatedPlayers,
-            currentPlayers: (teeTime.currentPlayers || 1) + 1
-          };
-        }
-        return teeTime;
-      }));
+      // Real-time updates will handle the UI changes automatically
       
       // Show success message
       if (window.showToast) {
@@ -211,24 +197,7 @@ export default function MyTeeTimes() {
     try {
       await respondToInvitation(teeTimeId, user.uid, 'decline');
       
-      // Optimistically update the UI
-      setTeeTimes(prev => prev.map(teeTime => {
-        if (teeTime.id === teeTimeId) {
-          // Update the player status
-          const updatedPlayers = teeTime.players?.map(player => {
-            if (player.userId === user.uid) {
-              return { ...player, status: 'declined' };
-            }
-            return player;
-          }) || [];
-          
-          return {
-            ...teeTime,
-            players: updatedPlayers
-          };
-        }
-        return teeTime;
-      }));
+      // Real-time updates will handle the UI changes automatically
       
       // Show success message
       if (window.showToast) {
@@ -304,14 +273,6 @@ export default function MyTeeTimes() {
             <Text className="text-red-600 dark:text-red-400 font-medium">
               {error instanceof Error ? error.message : String(error)}
             </Text>
-            <div className="mt-2">
-              <Button 
-                variant="outline" 
-                onClick={() => fetchTeeTimes(true)}
-              >
-                Try Again
-              </Button>
-            </div>
           </CardContent>
         </Card>
       )}
@@ -447,19 +408,6 @@ export default function MyTeeTimes() {
                     </Button>
                   </div>
                 )}
-                
-                {hasMore && filteredTeeTimes.length > 0 && (
-                  <div className="flex justify-center mt-6">
-                    <Button
-                      variant="outline"
-                      onClick={handleLoadMore}
-                      isLoading={loadingMore}
-                      disabled={loadingMore}
-                    >
-                      Load More
-                    </Button>
-                  </div>
-                )}
               </div>
             )
           },
@@ -498,19 +446,6 @@ export default function MyTeeTimes() {
                     </Button>
                   </div>
                 )}
-                
-                {hasMore && filteredTeeTimes.length > 0 && (
-                  <div className="flex justify-center mt-6">
-                    <Button
-                      variant="outline"
-                      onClick={handleLoadMore}
-                      isLoading={loadingMore}
-                      disabled={loadingMore}
-                    >
-                      Load More
-                    </Button>
-                  </div>
-                )}
               </div>
             )
           },
@@ -546,19 +481,6 @@ export default function MyTeeTimes() {
                     <Text className="text-gray-500 dark:text-gray-400">
                       No past tee times found
                     </Text>
-                  </div>
-                )}
-                
-                {hasMore && filteredTeeTimes.length > 0 && (
-                  <div className="flex justify-center mt-6">
-                    <Button
-                      variant="outline"
-                      onClick={handleLoadMore}
-                      isLoading={loadingMore}
-                      disabled={loadingMore}
-                    >
-                      Load More
-                    </Button>
                   </div>
                 )}
               </div>

@@ -32,7 +32,7 @@ export const onTeeTimeCreated = functions
     }
     
     try {
-      logger.info(`Processing new tee time creation: ${teeTimeId}`);
+      logger.info(`Processing new tee time creation: ${teeTimeId} by user ${teeTimeData.creatorId}`);
       
       // Skip if this is a system-created tee time without creator
       if (!teeTimeData.creatorId) {
@@ -48,6 +48,7 @@ export const onTeeTimeCreated = functions
       // Create a post for this tee time
       const postRef = admin.firestore().collection('posts').doc();
       
+      // FIXED: Use the correct field names that match the Post interface
       const postData = {
         authorId: teeTimeData.creatorId,
         content: `I'm hosting a tee time at ${teeTimeData.courseName || 'my local course'} on ${dateTime.toLocaleDateString()} at ${dateTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}. Looking for ${(teeTimeData.maxPlayers || 4) - 1} more players!`,
@@ -60,12 +61,73 @@ export const onTeeTimeCreated = functions
         dateTime: teeTimeData.dateTime || admin.firestore.Timestamp.fromDate(new Date()),
         maxPlayers: teeTimeData.maxPlayers || 4,
         visibility: teeTimeData.visibility === 'private' ? 'private' : 'public',
-        likeCount: 0,
-        commentCount: 0
+        likes: 0,  // FIXED: Changed from likeCount
+        comments: 0,  // FIXED: Changed from commentCount
+        likedBy: []  // FIXED: Added missing field
       };
       
-      await postRef.set(postData);
-      logger.info(`Created post ${postRef.id} for tee time ${teeTimeId}`);
+      // Use transaction for atomicity
+      try {
+        await admin.firestore().runTransaction(async (transaction) => {
+          logger.info(`Attempting to create post with data: ${JSON.stringify(postData)}`);
+          transaction.set(postRef, postData);
+        
+          // ADD THIS: Create feed entry for the creator
+          logger.info(`Creating feed entry for post ${postRef.id}`);
+          const feedRef = admin.firestore()
+            .collection('feeds')
+            .doc(teeTimeData.creatorId)
+            .collection('posts')
+            .doc(postRef.id);
+            
+          transaction.set(feedRef, {
+            postId: postRef.id,
+            authorId: teeTimeData.creatorId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            postType: 'tee-time',
+            teeTimeId: teeTimeId,
+            courseName: teeTimeData.courseName || '',
+            dateTime: teeTimeData.dateTime || admin.firestore.Timestamp.fromDate(new Date()),
+            maxPlayers: teeTimeData.maxPlayers || 4,
+            visibility: teeTimeData.visibility
+          });
+        });
+        
+        logger.info(`Successfully created post ${postRef.id} and feed entry for tee time ${teeTimeId}`);
+      } catch (transactionError: unknown) {
+        const errorMessage = transactionError instanceof Error ? transactionError.message : 'Unknown error';
+        logger.error(`Transaction failed for creating post and feed entry: ${errorMessage}`, transactionError);
+        
+        // Fallback to separate operations if transaction fails
+        try {
+          logger.info(`Attempting fallback operations for post ${postRef.id}`);
+          await postRef.set(postData);
+          
+          const feedRef = admin.firestore()
+            .collection('feeds')
+            .doc(teeTimeData.creatorId)
+            .collection('posts')
+            .doc(postRef.id);
+            
+          await feedRef.set({
+            postId: postRef.id,
+            authorId: teeTimeData.creatorId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            postType: 'tee-time',
+            teeTimeId: teeTimeId,
+            courseName: teeTimeData.courseName || '',
+            dateTime: teeTimeData.dateTime || admin.firestore.Timestamp.fromDate(new Date()),
+            maxPlayers: teeTimeData.maxPlayers || 4,
+            visibility: teeTimeData.visibility
+          });
+          
+          logger.info(`Fallback operations succeeded for post ${postRef.id}`);
+        } catch (fallbackError: unknown) {
+          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
+          logger.error(`Fallback operations failed: ${fallbackErrorMessage}`, fallbackError);
+          // Continue to notification even if fallback fails
+        }
+      }
       
       // If tee time is visible to followers, notify them
       if (teeTimeData.visibility === 'followers') {
@@ -73,8 +135,9 @@ export const onTeeTimeCreated = functions
       }
       
       return true;
-    } catch (error) {
-      logger.error(`Error processing new tee time ${teeTimeId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error processing new tee time ${teeTimeId}: ${errorMessage}`, error);
       return false;
     }
   });
@@ -132,7 +195,7 @@ async function notifyFollowers(creatorId: string, teeTimeId: string, teeTimeData
       }
       
       const batch = admin.firestore().batch();
-      let batchNotificationCount = 0;
+      let batchOperations = 0;
       
       // Create notifications for followers in this batch
       followersSnapshot.docs.forEach(doc => {
@@ -156,28 +219,29 @@ async function notifyFollowers(creatorId: string, teeTimeId: string, teeTimeData
             creatorName: creatorName
           }
         });
+        batchOperations++;
         
         // Update user's unread notification count
         const userRef = admin.firestore().collection('users').doc(followerId);
         batch.update(userRef, {
           unreadNotifications: admin.firestore.FieldValue.increment(1)
         });
-        
-        batchNotificationCount++;
+        batchOperations++;
       });
       
-      if (batchNotificationCount > 0) {
+      if (batchOperations > 0) {
         await batch.commit();
-        totalNotificationsSent += batchNotificationCount;
-        logger.info(`Sent batch of ${batchNotificationCount} follower notifications for tee time ${teeTimeId}`);
+        totalNotificationsSent += batchOperations / 2; // Each notification counts as 2 operations (set + update)
+        logger.info(`Sent batch of ${batchOperations/2} follower notifications for tee time ${teeTimeId}`);
       }
       
       // If we got fewer results than the limit, there are no more followers
       if (followersSnapshot.docs.length < NOTIFICATION_BATCH_SIZE) {
         hasMoreFollowers = false;
       }
-    } catch (error) {
-      logger.error(`Error sending follower notifications for tee time ${teeTimeId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error sending follower notifications for tee time ${teeTimeId}: ${errorMessage}`, error);
       // Continue with next batch despite errors
       hasMoreFollowers = false;
     }
@@ -261,6 +325,8 @@ export const onTeeTimeUpdated = functions
           }
         }
         
+        logger.info(`Updating post ${postDoc.id} for tee time ${teeTimeId}`);
+        
         // Update the post
         await postDoc.ref.update({
           content: content,
@@ -271,7 +337,7 @@ export const onTeeTimeUpdated = functions
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
-        logger.info(`Updated post ${postDoc.id} for tee time ${teeTimeId}`);
+        logger.info(`Successfully updated post ${postDoc.id} for tee time ${teeTimeId}`);
       }
       
       // Handle status changes for notifications
@@ -280,8 +346,9 @@ export const onTeeTimeUpdated = functions
       }
       
       return true;
-    } catch (error) {
-      logger.error(`Error processing tee time update ${teeTimeId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error processing tee time update ${teeTimeId}: ${errorMessage}`, error);
       return false;
     }
   });
@@ -321,7 +388,7 @@ async function notifyCancellation(teeTimeId: string, teeTimeData: any) {
       lastDocumentRef = playersSnapshot.docs[playersSnapshot.docs.length - 1];
       
       const batch = admin.firestore().batch();
-      let batchNotificationCount = 0;
+      let batchOperations = 0;
       
       // Create notifications for players in this batch
       playersSnapshot.docs.forEach(doc => {
@@ -350,28 +417,29 @@ async function notifyCancellation(teeTimeId: string, teeTimeData: any) {
           },
           priority: 'high'
         });
+        batchOperations++;
         
         // Update user's unread notification count
         const userRef = admin.firestore().collection('users').doc(playerData.userId);
         batch.update(userRef, {
           unreadNotifications: admin.firestore.FieldValue.increment(1)
         });
-        
-        batchNotificationCount++;
+        batchOperations++;
       });
       
-      if (batchNotificationCount > 0) {
+      if (batchOperations > 0) {
         await batch.commit();
-        totalNotificationsSent += batchNotificationCount;
-        logger.info(`Sent batch of ${batchNotificationCount} cancellation notifications for tee time ${teeTimeId}`);
+        totalNotificationsSent += batchOperations / 2; // Each notification counts as 2 operations (set + update)
+        logger.info(`Sent batch of ${batchOperations/2} cancellation notifications for tee time ${teeTimeId}`);
       }
       
       // If we got fewer results than the limit, there are no more players
       if (playersSnapshot.docs.length < NOTIFICATION_BATCH_SIZE) {
         hasMorePlayers = false;
       }
-    } catch (error) {
-      logger.error(`Error sending cancellation notifications for tee time ${teeTimeId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error sending cancellation notifications for tee time ${teeTimeId}: ${errorMessage}`, error);
       // Continue with next batch despite errors
       hasMorePlayers = false;
     }
@@ -405,6 +473,7 @@ export const onTeeTimeDeleted = functions
       
       // Use a batched write for associated deletions
       const batch = admin.firestore().batch();
+      let batchOperations = 0;
       
       // Find and delete the associated post
       const postsQuery = await admin.firestore()
@@ -415,19 +484,26 @@ export const onTeeTimeDeleted = functions
         .get();
       
       if (!postsQuery.empty) {
+        logger.info(`Deleting post ${postsQuery.docs[0].id} for tee time ${teeTimeId}`);
         batch.delete(postsQuery.docs[0].ref);
+        batchOperations++;
+      } else {
+        logger.warn(`No post found to delete for tee time ${teeTimeId}`);
       }
       
       // Find and delete notifications for this tee time (with pagination)
       await deleteRelatedNotifications(teeTimeId);
       
       // Execute the batch for post deletion
-      await batch.commit();
-      logger.info(`Cleaned up post for deleted tee time ${teeTimeId}`);
+      if (batchOperations > 0) {
+        await batch.commit();
+        logger.info(`Cleaned up post for deleted tee time ${teeTimeId}`);
+      }
       
       return true;
-    } catch (error) {
-      logger.error(`Error cleaning up deleted tee time ${teeTimeId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error cleaning up deleted tee time ${teeTimeId}: ${errorMessage}`, error);
       return false;
     }
   });
@@ -482,8 +558,9 @@ async function deleteRelatedNotifications(teeTimeId: string) {
       if (notificationsSnapshot.docs.length < MAX_BATCH_SIZE) {
         hasMoreNotifications = false;
       }
-    } catch (error) {
-      logger.error(`Error deleting notifications for tee time ${teeTimeId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error deleting notifications for tee time ${teeTimeId}: ${errorMessage}`, error);
       // Continue with next batch despite errors
       hasMoreNotifications = false;
     }
@@ -540,12 +617,14 @@ export const onPlayerAddedToTeeTime = functions
       
       // FIXED: Handle based on request type
       const batch = admin.firestore().batch();
+      let batchOperations = 0;
       
       // Check if this is an invitation or a join request
       const isInvitation = playerData.requestType === 'invitation';
       const isJoinRequest = !isInvitation;
       
       if (isInvitation) {
+        logger.info(`Creating invitation notification for player ${playerId}`);
         // FIXED: Player was invited - notify them to respond
         const notificationRef = admin.firestore()
           .collection('notifications')
@@ -568,13 +647,16 @@ export const onPlayerAddedToTeeTime = functions
           },
           priority: 'high'
         });
+        batchOperations++;
         
         // Update user's unread notification count
         const userRef = admin.firestore().collection('users').doc(playerId);
         batch.update(userRef, {
           unreadNotifications: admin.firestore.FieldValue.increment(1)
         });
+        batchOperations++;
       } else if (isJoinRequest) {
+        logger.info(`Creating join request notification for creator ${teeTimeData.creatorId}`);
         // FIXED: Player requested to join - notify creator
         const notificationRef = admin.firestore()
           .collection('notifications')
@@ -597,19 +679,25 @@ export const onPlayerAddedToTeeTime = functions
           },
           priority: 'high'
         });
+        batchOperations++;
         
         // Update creator's unread notification count
         const creatorRef = admin.firestore().collection('users').doc(teeTimeData.creatorId);
         batch.update(creatorRef, {
           unreadNotifications: admin.firestore.FieldValue.increment(1)
         });
+        batchOperations++;
       }
       
-      await batch.commit();
+      if (batchOperations > 0) {
+        await batch.commit();
+        logger.info(`Successfully processed player addition for tee time ${teeTimeId}, player ${playerId}`);
+      }
       
       return true;
-    } catch (error) {
-      logger.error(`Error processing player addition for tee time ${teeTimeId}, player ${playerId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error processing player addition for tee time ${teeTimeId}, player ${playerId}: ${errorMessage}`, error);
       return false;
     }
   });
@@ -664,6 +752,7 @@ export const onPlayerUpdated = functions
       // Handle different status transitions
       const statusTransition = `${beforeData.status}_to_${afterData.status}`;
       const batch = admin.firestore().batch();
+      let batchOperations = 0;
       
       switch(statusTransition) {
         case 'pending_to_confirmed':
@@ -689,12 +778,14 @@ export const onPlayerUpdated = functions
                   : new Date(teeTimeData.dateTime || Date.now()).toISOString()
               }
             });
+            batchOperations++;
             
             // Update creator's unread notification count
             const creatorRef = admin.firestore().collection('users').doc(teeTimeData.creatorId);
             batch.update(creatorRef, {
               unreadNotifications: admin.firestore.FieldValue.increment(1)
             });
+            batchOperations++;
           } else if (afterData.requestType === 'join_request' || !afterData.requestType) {
             // Player was approved by creator - notify player
             const notificationRef = admin.firestore()
@@ -716,12 +807,14 @@ export const onPlayerUpdated = functions
                   : new Date(teeTimeData.dateTime || Date.now()).toISOString()
               }
             });
+            batchOperations++;
             
             // Update user's unread notification count
             const userRef = admin.firestore().collection('users').doc(playerId);
             batch.update(userRef, {
               unreadNotifications: admin.firestore.FieldValue.increment(1)
             });
+            batchOperations++;
           }
           
           // Update tee time player count and status
@@ -730,6 +823,7 @@ export const onPlayerUpdated = functions
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             status: (teeTimeData.currentPlayers || 1) + 1 >= (teeTimeData.maxPlayers || 4) ? 'full' : 'open'
           });
+          batchOperations++;
           break;
           
         case 'pending_to_declined':
@@ -754,12 +848,14 @@ export const onPlayerUpdated = functions
                   : new Date(teeTimeData.dateTime || Date.now()).toISOString()
               }
             });
+            batchOperations++;
             
             // Update creator's unread notification count
             const creatorRef = admin.firestore().collection('users').doc(teeTimeData.creatorId);
             batch.update(creatorRef, {
               unreadNotifications: admin.firestore.FieldValue.increment(1)
             });
+            batchOperations++;
           }
           break;
           
@@ -770,17 +866,20 @@ export const onPlayerUpdated = functions
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             status: 'open' // If someone leaves a full tee time, it's now open again
           });
+          batchOperations++;
           break;
       }
       
       // Commit any notifications or updates
-      if (batch.commit.length > 0) {
+      if (batchOperations > 0) {
+        logger.info(`Committing batch with ${batchOperations} operations for status transition: ${statusTransition}`);
         await batch.commit();
       }
       
       return true;
-    } catch (error) {
-      logger.error(`Error processing player update for tee time ${teeTimeId}, player ${playerId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error processing player update for tee time ${teeTimeId}, player ${playerId}: ${errorMessage}`, error);
       return false;
     }
   });
@@ -840,8 +939,9 @@ export const onPlayerRemoved = functions
       logger.info(`Updated tee time status after confirmed player ${playerId} was removed from tee time ${teeTimeId}`);
       
       return true;
-    } catch (error) {
-      logger.error(`Error processing player removal for tee time ${teeTimeId}, player ${playerId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Error processing player removal for tee time ${teeTimeId}, player ${playerId}: ${errorMessage}`, error);
       return false;
     }
   });
@@ -868,8 +968,9 @@ export const cleanupOldTeeTimes = functions
       await processTeeTimeCleanupBatch(thirtyDaysAgo);
       
       return true;
-    } catch (error) {
-      logger.error('Error in primary cleanup function:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Error in primary cleanup function: ' + errorMessage, error);
       throw error;
     }
   });
@@ -916,8 +1017,9 @@ export const continueTeeTimeCleanup = functions
       await processTeeTimeCleanupBatch(timestampCutoff, lastDocRef);
       
       return true;
-    } catch (error) {
-      logger.error('Error in cleanup continuation function:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Error in cleanup continuation function: ' + errorMessage, error);
       throw error;
     }
   });
@@ -952,7 +1054,7 @@ async function processTeeTimeCleanupBatch(
     
     // Process batch of tee times
     const batch = admin.firestore().batch();
-    let count = 0;
+    let batchOperations = 0;
     
     // Keep track of the last document for pagination
     const lastProcessedDoc = oldTeeTimesSnapshot.docs[oldTeeTimesSnapshot.docs.length - 1];
@@ -970,17 +1072,17 @@ async function processTeeTimeCleanupBatch(
         ...docData,
         archivedAt: admin.firestore.FieldValue.serverTimestamp()
       });
+      batchOperations++;
       
       // Delete the original
       batch.delete(doc.ref);
-      
-      count++;
+      batchOperations++;
     }
     
     // Check if we need to use multiple batches
-    if (count > 0) {
+    if (batchOperations > 0) {
       await batch.commit();
-      logger.info(`Archived ${count} old tee times in batch`);
+      logger.info(`Archived ${batchOperations/2} old tee times in batch`);
     }
     
     // If we hit the batch limit and there are likely more items, trigger a follow-up task
@@ -991,7 +1093,7 @@ async function processTeeTimeCleanupBatch(
       const message = {
         timestamp: timestampCutoff.toMillis(),
         lastDocumentId: lastProcessedDoc.id,
-        batchCount: count
+        batchCount: batchOperations/2
       };
       
       // Use the PubSub client to publish a message
@@ -1000,8 +1102,9 @@ async function processTeeTimeCleanupBatch(
         data: Buffer.from(JSON.stringify(message))
       });
     }
-  } catch (error) {
-    logger.error('Error in batch cleanup process:', error);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Error in batch cleanup process: ' + errorMessage, error);
     throw error;
   }
 }

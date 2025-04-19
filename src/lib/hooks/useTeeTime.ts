@@ -204,6 +204,20 @@ export function useTeeTime() {
     }
   }, [user, teeTimeContext]);
   
+  // NEW: Subscribe to a user's tee times with real-time updates
+  const subscribeTeeTimesByUser = useCallback((
+    callback: (teeTimes: TeeTime[]) => void
+  ): (() => void) => {
+    if (!user) {
+      console.warn('Cannot subscribe to tee times: user not logged in');
+      callback([]);
+      return () => {}; // Return empty unsubscribe function
+    }
+    
+    // Use the context's subscription function with the current user
+    return teeTimeContext.subscribeTeeTimesByUser(user.uid, callback);
+  }, [user, teeTimeContext]);
+  
   // Return all context functions plus the additional ones
   return {
     // Pass through all context properties
@@ -219,6 +233,7 @@ export function useTeeTime() {
     deleteTeeTime: handleDeleteTeeTime,
     deletePost,
     getUserTeeTimes, // FIXED version that returns paginated results
+    subscribeTeeTimesByUser, // NEW: Add real-time subscription function
     
     // Add internal states for UI
     isDeleting,

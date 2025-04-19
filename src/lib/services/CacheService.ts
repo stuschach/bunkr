@@ -990,19 +990,25 @@ class CacheService {
   }
 
   /**
-   * Invalidate all user-related tee time caches
+   * NEW: Invalidate all user-related tee time caches
+   * This ensures that when data changes, components don't show stale data
    */
   invalidateUserTeeTimeCache(userId: string) {
     if (!userId) return;
     
-    // Remove user's tee times
-    this.remove(CACHE_KEYS.USER_TEE_TIMES(userId), CacheOperationPriority.HIGH);
+    // Create a promise array to execute multiple operations in parallel
+    const promises = [
+      // Remove user's tee times
+      this.remove(CACHE_KEYS.USER_TEE_TIMES(userId), CacheOperationPriority.HIGH),
+      
+      // Remove user-specific tee time caches
+      this.removeByPrefix(`user_${userId}_tee`, CacheOperationPriority.NORMAL),
+      
+      // User's activity may affect tee time lists
+      this.removeByPrefix('tee_times_list', CacheOperationPriority.LOW)
+    ];
     
-    // Remove user-specific tee time caches
-    this.removeByPrefix(`user_${userId}_tee`, CacheOperationPriority.NORMAL);
-    
-    // User's activity may affect tee time lists
-    this.removeByPrefix('tee_times_list', CacheOperationPriority.LOW);
+    return Promise.all(promises).then(() => {});
   }
   
   /**

@@ -1,7 +1,7 @@
 // src/components/tee-times/TeeTimeInvitation.tsx
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -9,6 +9,8 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Typography';
 import { TeeTime } from '@/types/tee-times';
 import { UserProfile } from '@/types/auth';
+import { useUsers } from '@/lib/hooks/useUsers'; // Added useUsers hook
+import { LoadingSpinner } from '@/components/common/feedback/LoadingSpinner';
 import { 
   CheckCircle, 
   XCircle, 
@@ -16,7 +18,8 @@ import {
   Clock, 
   Users, 
   MapPin, 
-  Mail
+  Mail,
+  User
 } from 'lucide-react';
 
 interface TeeTimeInvitationProps {
@@ -29,16 +32,76 @@ interface TeeTimeInvitationProps {
 
 export function TeeTimeInvitation({ 
   teeTime, 
-  creatorProfile, 
+  creatorProfile: initialCreatorProfile, 
   onAccept, 
   onDecline, 
   isLoading = false 
 }: TeeTimeInvitationProps) {
   const teeTimeDate = teeTime.dateTime ? new Date(teeTime.dateTime) : new Date();
   
+  // Use the useUsers hook to fetch the creator profile if not provided
+  const { getUserById, loading: userLoading } = useUsers();
+  const [creatorProfile, setCreatorProfile] = React.useState<UserProfile | null>(initialCreatorProfile);
+  
+  // Track if we've attempted to fetch the creator profile
+  const creatorFetchAttemptedRef = useRef(false);
+  
+  // Fetch creator profile if not provided
+  useEffect(() => {
+    const fetchCreator = async () => {
+      if (!creatorProfile && teeTime.creatorId && !creatorFetchAttemptedRef.current) {
+        // Mark as attempted so we don't try again in this render cycle
+        creatorFetchAttemptedRef.current = true;
+        
+        try {
+          const profile = await getUserById(teeTime.creatorId);
+          if (profile && !Array.isArray(profile)) {
+            setCreatorProfile(profile);
+          }
+        } catch (error) {
+          console.error('Error fetching creator profile for invitation:', error);
+        }
+      }
+    };
+    
+    fetchCreator();
+  }, [teeTime.creatorId, creatorProfile, getUserById]);
+  
   // Format date and time for display
   const formattedDate = format(teeTimeDate, 'EEEE, MMMM d, yyyy');
   const formattedTime = format(teeTimeDate, 'h:mm a');
+
+  // Render creator information
+  const renderCreator = () => {
+    if (creatorProfile) {
+      return (
+        <div className="mr-3">
+          <Avatar className="h-10 w-10 border-2 border-amber-200 dark:border-amber-800">
+            <AvatarImage src={creatorProfile.photoURL || undefined} />
+            <AvatarFallback>
+              {creatorProfile.displayName?.charAt(0) || 'U'}
+            </AvatarFallback>
+          </Avatar>
+        </div>
+      );
+    } else if (userLoading[teeTime.creatorId]) {
+      return (
+        <div className="mr-3">
+          <div className="h-10 w-10 border-2 border-amber-200 dark:border-amber-800 rounded-full flex items-center justify-center bg-amber-50 dark:bg-amber-900/30">
+            <LoadingSpinner size="sm" className="text-amber-500" />
+          </div>
+        </div>
+      );
+    } else {
+      return (
+        <div className="mr-3">
+          <div className="h-10 w-10 border-2 border-amber-200 dark:border-amber-800 rounded-full flex items-center justify-center bg-amber-50 dark:bg-amber-900/30">
+            <User className="h-5 w-5 text-amber-500" />
+          </div>
+        </div>
+      );
+    }
+  };
 
   return (
     <Card className="mb-4 border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 overflow-hidden">
@@ -52,17 +115,12 @@ export function TeeTimeInvitation({
         
         <div className="p-4">
           <div className="flex items-center mb-4">
-            <div className="mr-3">
-              <Avatar className="h-10 w-10 border-2 border-amber-200 dark:border-amber-800">
-                <AvatarImage src={creatorProfile?.photoURL || undefined} />
-                <AvatarFallback>
-                  {creatorProfile?.displayName?.charAt(0) || 'U'}
-                </AvatarFallback>
-              </Avatar>
-            </div>
+            {renderCreator()}
             <div>
               <Text className="text-amber-800 dark:text-amber-200">
-                <span className="font-semibold">{creatorProfile?.displayName || 'Someone'}</span> has invited you to join their tee time at <span className="font-semibold">{teeTime.courseName}</span>
+                <span className="font-semibold">
+                  {creatorProfile?.displayName || (userLoading[teeTime.creatorId] ? 'Loading...' : 'Someone')}
+                </span> has invited you to join their tee time at <span className="font-semibold">{teeTime.courseName}</span>
               </Text>
             </div>
           </div>
